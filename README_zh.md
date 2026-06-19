@@ -176,6 +176,25 @@ python -m mini_cc.evals.task_success
 
 详细架构见：`docs/coding_reliability_loop.md`。
 
+## 阶段化 Coding Task State Machine
+
+`TaskStateMachine` 把代码任务从普通的“模型想调什么工具就调什么工具”，升级成按阶段推进：
+
+```text
+INTAKE -> EXPLORE -> LOCALIZE -> PLAN -> EDIT -> VERIFY -> REPAIR -> FINAL
+```
+
+它不是只靠 prompt 提醒模型，而是在工具执行前做硬性检查：
+
+- 没有先探索项目时，不能直接写文件；
+- 没有读取目标文件时，不能修改这个文件；
+- 没有写出 `planned_files` 计划时，不能进入编辑；
+- 修改只能落在计划文件内，除非任务本身明确要求新增文件；
+- 修改后必须通过 `run_shell` 跑真实测试、lint、类型检查或构建检查；
+- 验证失败后进入 REPAIR，只允许做最小修复并重新验证。
+
+简单说：`TaskStateMachine` 管“过程有没有按正确阶段走”，`CodingLoopPolicy` 管“最后有没有真实验证通过”。
+
 ## 生产可用性
 
 本项目已经补充了面向交付的基础工程能力：
@@ -244,7 +263,7 @@ python -m unittest discover
 当前本地验证结果：
 
 ```text
-Ran 245 tests
+Ran 255 tests
 OK
 ```
 

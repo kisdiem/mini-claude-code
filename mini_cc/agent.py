@@ -7,7 +7,8 @@ from .coding_loop import CodingLoopPolicy, parse_exit_code
 from .hooks import HookRuntime
 from .llm import Provider
 from .session import AgentSession, SessionStore
-from .tools import ToolRunner
+from .task_state import TaskStateMachine
+from .tools import ToolResult, ToolRunner
 from .workflow import ExecutionRecord, StructuredWorkflow, TaskPlan
 
 
@@ -19,7 +20,11 @@ Work like a careful coding agent:
 - Prefer apply_patch for code edits when exact string replacement is fragile.
 - Keep edits minimal and explain important tradeoffs.
 - Never claim a command or edit succeeded unless a tool result confirms it.
+- For coding tasks, follow phases: INTAKE, EXPLORE, LOCALIZE, PLAN, EDIT, VERIFY, REPAIR, FINAL.
+- Explore and localize before editing. Do not modify a file before reading it.
+- Produce a minimal edit plan with planned_files before changing files.
 - For code modification tasks, run a real verification command after editing; git_status, git_diff, context_snapshot, list_files, read_file, and search_text are not verification.
+- If verification fails, analyze the failure output before making one minimal repair.
 - If a task needs writes or shell commands, ask through the available tools and obey permission denials.
 """
 
@@ -60,6 +65,7 @@ class Agent:
         compaction_keep_recent_messages: int = 6,
         model_context_token_budget: int = 8000,
         coding_loop: CodingLoopPolicy | None = None,
+        task_state_machine: TaskStateMachine | None = None,
     ) -> None:
         self.provider = provider
         self.tools = tools
@@ -75,11 +81,14 @@ class Agent:
         self.compaction_keep_recent_messages = max(2, int(compaction_keep_recent_messages))
         self.model_context_token_budget = max(256, int(model_context_token_budget))
         self.coding_loop = coding_loop
+        self.task_state_machine = task_state_machine
 
     def run(self, prompt: str, *, resume_session_id: str | None = None) -> None:
         started = time.perf_counter()
         if self.coding_loop is not None:
             self.coding_loop.start(prompt)
+        if self.task_state_machine is not None:
+            self.task_state_machine.start(prompt)
         if self.hook_runtime is not None:
             prompt_decision = self.hook_runtime.user_prompt_submit(
                 prompt,
@@ -168,11 +177,31 @@ class Agent:
                         text = block.get("text", "")
                         if text:
                             self.output(text)
+                            if self.task_state_machine is not None:
+                                self.task_state_machine.observe_assistant_text(text)
                     elif block["type"] == "tool_use":
                         name = block["name"]
                         tool_input = block.get("input") or {}
                         self.output(f"\n[tool] {name}({tool_input})")
-                        result = self.tools.run(name, tool_input)
+                        task_decision = None
+                        if self.task_state_machine is not None:
+                            task_decision = self.task_state_machine.before_tool(name, tool_input)
+                        if task_decision is not None and not task_decision.allow:
+                            result = ToolResult(
+                                (
+                                    "Task phase blocked: "
+                                    + task_decision.reason
+                                    + "\n"
+                                    + task_decision.instruction
+                                ),
+                                is_error=True,
+                                metadata={
+                                    "task_phase": task_decision.next_phase.value if task_decision.next_phase else None,
+                                    "task_phase_reason": task_decision.reason,
+                                },
+                            )
+                        else:
+                            result = self.tools.run(name, tool_input)
                         planned_step = self.workflow.executor.classify_tool(name) if self.workflow is not None else "tool"
                         executions.append(
                             ExecutionRecord(
@@ -215,6 +244,8 @@ class Agent:
                             self.output(f"[tool ok] {result.content[:800]}\n")
                         if self.coding_loop is not None:
                             self.coding_loop.observe_tool_result(name, tool_input, result)
+                        if self.task_state_machine is not None:
+                            self.task_state_machine.observe_tool_result(name, tool_input, result)
                         tool_results.append(
                             {
                                 "type": "tool_result",
@@ -229,6 +260,23 @@ class Agent:
                     self.session_store.update_messages(session, self.messages)
                 turn += 1
                 if not tool_results:
+                    if self.task_state_machine is not None:
+                        task_decision = self.task_state_machine.finish_decision()
+                        if not task_decision.allow:
+                            self.output(f"\n[task-state] {task_decision.reason}\n")
+                            self.messages.append({"role": "user", "content": task_decision.instruction})
+                            if self.session_store is not None and session is not None:
+                                self.session_store.record(
+                                    session,
+                                    "task_state_gate",
+                                    {
+                                        "reason": task_decision.reason,
+                                        "next_phase": task_decision.next_phase.value if task_decision.next_phase else None,
+                                        "state": self.task_state_machine.state.to_json(),
+                                    },
+                                )
+                                self.session_store.update_messages(session, self.messages)
+                            continue
                     if self.coding_loop is not None:
                         # CodingLoopPolicy is the source of truth for code task success verification.
                         decision = self.coding_loop.finish_decision()

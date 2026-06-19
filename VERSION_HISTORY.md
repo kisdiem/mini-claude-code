@@ -3,6 +3,53 @@
 This file records architecture iterations, benchmark status, and known
 validation limits for the teaching agent.
 
+## 3.7.0 - Staged Coding Task State Machine
+
+Date: 2026-06-20
+
+Status: implemented and locally tested.
+
+What changed:
+
+- upgraded package version to `3.7.0`;
+- added `mini_cc.task_state.TaskStateMachine`;
+- added explicit coding task phases:
+  - `INTAKE`;
+  - `EXPLORE`;
+  - `LOCALIZE`;
+  - `PLAN`;
+  - `EDIT`;
+  - `VERIFY`;
+  - `REPAIR`;
+  - `FINAL`;
+- integrated the state machine into `Agent.run` as a process gate before tool
+  execution and before final answers;
+- kept `CodingLoopPolicy` as the final code task success gate;
+- blocked unsafe coding-process shortcuts:
+  - editing before exploration;
+  - editing a file that has not been read;
+  - editing outside `planned_files`;
+  - treating `git_diff`, `context_snapshot`, `echo`, `cat`, or `ls` as code
+    verification;
+- updated base and S20 prompts to describe the staged coding discipline;
+- added direct state-machine tests and Agent integration tests.
+
+Test status:
+
+- targeted task-state, agent, CLI, workflow, S20, and coding-loop tests passed
+  locally;
+- full `python -m unittest discover` passed locally:
+  - 255 tests;
+  - `OK`.
+
+Important interpretation:
+
+- this version focuses on process reliability, not on adding more tools;
+- MCP, subagent, memory, frontend, and benchmark-report modules were not
+  expanded in this change;
+- the state machine improves coding task discipline, but it is still a local
+  teaching-runtime mechanism rather than a claim of external benchmark parity.
+
 ## 3.6.1 - Verification Semantics Cleanup
 
 Date: 2026-06-20

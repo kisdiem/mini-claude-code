@@ -1,8 +1,9 @@
 # Mini Claude Code
 
 This is a teaching implementation of a Claude-Code-like coding agent. The first
-version showed the minimal loop. The current `3.6.1` version adds a Coding Task
-Success Loop on top of the existing evidence-gated reports, tool-use traces,
+version showed the minimal loop. The current `3.7.0` version adds a staged
+coding task state machine on top of the Coding Task Success Loop,
+evidence-gated reports, tool-use traces,
 MCP/hook validation, subagent/context runtime, and demo packaging.
 
 中文说明: [README_zh.md](README_zh.md)
@@ -128,6 +129,30 @@ Important distinction:
 
 See [docs/coding_reliability_loop.md](docs/coding_reliability_loop.md) for the
 runtime flow.
+
+## Staged Coding Task State Machine
+
+`TaskStateMachine` upgrades the coding loop from a plain ReAct tool cycle into
+a staged executor:
+
+```text
+INTAKE -> EXPLORE -> LOCALIZE -> PLAN -> EDIT -> VERIFY -> REPAIR -> FINAL
+```
+
+The state machine enforces process rules in code, not only in the system
+prompt:
+
+- writes are blocked before exploration and planning;
+- existing files must be read before they can be edited;
+- edits are limited to `planned_files` unless the task explicitly requires a
+  new file;
+- after edits, only real test/lint/typecheck commands through `run_shell` move
+  the task toward `FINAL`;
+- failed verification moves the task to `REPAIR` until the repair limit is
+  reached.
+
+This is separate from `CodingLoopPolicy`: the state machine controls the task
+process, while `CodingLoopPolicy` remains the final task-success gate.
 
 ## Demo Package
 
