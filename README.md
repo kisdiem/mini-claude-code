@@ -5,6 +5,10 @@ version showed the minimal loop. The current `3.5.0` version adds evidence-gated
 runtime reporting, real tool-use traces, MCP/hook live validation, more reliable
 subagent/context behavior, and demo packaging for external review.
 
+中文说明: [README_zh.md](README_zh.md)
+
+![Mini Claude Code desktop screenshot](docs/images/desktop-app.png)
+
 Reference:
 
 - shareAI-lab/learn-claude-code: https://github.com/shareAI-lab/learn-claude-code
@@ -15,7 +19,7 @@ Reference:
 Run with no API key:
 
 ```powershell
-cd C:\Users\sixth\mini-claude-code
+cd mini-claude-code
 py -3 -m mini_cc --mock --workspace . "list files"
 ```
 
@@ -43,11 +47,11 @@ Run tests:
 py -3 -m unittest discover
 ```
 
-On this Windows machine, Python 3.10 is the known-good test runner:
+If multiple Python versions are installed, select a known-good Python manually:
 
 ```powershell
-$py='C:\Users\sixth\AppData\Local\Programs\Python\Python310\python.exe'
-$env:TMP='C:\Users\sixth\mini-claude-code\.tmp-tests-py310'
+$py='C:\Path\To\python.exe'
+$env:TMP="$PWD\.tmp-tests"
 $env:TEMP=$env:TMP
 $env:TMPDIR=$env:TMP
 $env:PYTHONDONTWRITEBYTECODE='1'
@@ -76,13 +80,21 @@ configs live under `examples/`.
 
 ## Local Frontend
 
-Start the native Windows desktop app:
+Start the native Windows desktop app with PowerShell:
 
 ```powershell
 .\scripts\start_desktop.ps1
 ```
 
-You can also double-click `Mini Claude Code.lnk` on the Windows desktop.
+For one-click Windows startup, double-click:
+
+```text
+scripts\start_desktop.bat
+```
+
+The script auto-detects `py`, `pythonw`, or `python` and launches the Tkinter
+desktop app. API keys are entered manually in the settings dialog and are stored
+only in local ignored files under `.mini_cc/`.
 
 Start the simple desktop-like web frontend:
 
@@ -110,7 +122,7 @@ work, larger budgets for code/test tasks, and long budgets for benchmark tasks.
 Install dependencies:
 
 ```powershell
-cd C:\Users\sixth\mini-claude-code
+cd mini-claude-code
 py -3 -m venv .venv
 .\.venv\Scripts\python -m pip install -r requirements.txt
 ```
