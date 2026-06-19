@@ -27,6 +27,18 @@ class ToolError(Exception):
     pass
 
 
+@dataclass(frozen=True)
+class PatchFileChange:
+    old_path: str
+    new_path: str
+    target_path: str
+    old_lines: list[str]
+    new_lines: list[str]
+    added_lines: int
+    deleted_lines: int
+    is_delete: bool = False
+
+
 def _clip(text: str, limit: int = MAX_TOOL_OUTPUT) -> str:
     if len(text) <= limit:
         return text
@@ -160,6 +172,25 @@ class ToolRunner:
                 },
             },
             {
+                "name": "apply_patch",
+                "description": "Apply a unified diff patch inside the workspace. Use this for code edits when replacing exact old text is fragile.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "patch": {
+                            "type": "string",
+                            "description": "Unified diff patch. File paths must stay inside the workspace.",
+                        },
+                        "dry_run": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": "Validate the patch without writing files.",
+                        },
+                    },
+                    "required": ["patch"],
+                },
+            },
+            {
                 "name": "run_shell",
                 "description": (
                     "Run a shell command in the workspace and return stdout/stderr. "
@@ -211,6 +242,8 @@ class ToolRunner:
                 return ToolResult(self.write_file(**tool_input))
             if name == "replace_text":
                 return ToolResult(self.replace_text(**tool_input))
+            if name == "apply_patch":
+                return ToolResult(self.apply_patch(**tool_input))
             if name == "run_shell":
                 return ToolResult(self.run_shell(**tool_input))
             raise ToolError(f"Unknown tool: {name}")
@@ -340,6 +373,169 @@ class ToolRunner:
         rel = target.relative_to(self.root).as_posix()
         self._emit_file_changed(path=rel, operation="replace", tool="replace_text", chars=len(updated))
         return f"Replaced {count} occurrence(s) in {rel}"
+
+    def apply_patch(self, patch: str, dry_run: bool = False) -> str:
+        changes = self._parse_unified_patch(patch)
+        if not changes:
+            raise ToolError("Patch contains no file changes")
+        changed_files = [change.target_path for change in changes]
+        if not dry_run:
+            self._require_permission(
+                "apply patch to " + ", ".join(changed_files),
+                PermissionRisk.WORKSPACE_WRITE,
+                tool_name="apply_patch",
+                tool_input={"patch": patch, "dry_run": dry_run},
+            )
+            for change in changes:
+                target = self.resolve(change.target_path)
+                if change.is_delete:
+                    if target.exists():
+                        target.unlink()
+                    operation = "delete"
+                    chars = 0
+                else:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    content = "\n".join(change.new_lines)
+                    if change.new_lines:
+                        content += "\n"
+                    with target.open("w", encoding="utf-8", newline="\n") as handle:
+                        handle.write(content)
+                    operation = "patch"
+                    chars = len(content)
+                self._emit_file_changed(path=change.target_path, operation=operation, tool="apply_patch", chars=chars)
+        added = sum(change.added_lines for change in changes)
+        deleted = sum(change.deleted_lines for change in changes)
+        return (
+            "Applied patch" if not dry_run else "Patch dry-run succeeded"
+        ) + (
+            f"\ndry_run={str(bool(dry_run)).lower()}"
+            f"\nchanged_files: {', '.join(changed_files)}"
+            f"\nadded_lines: {added}"
+            f"\ndeleted_lines: {deleted}"
+        )
+
+    def _parse_unified_patch(self, patch: str) -> list[PatchFileChange]:
+        lines = patch.splitlines()
+        changes: list[PatchFileChange] = []
+        index = 0
+        while index < len(lines):
+            line = lines[index]
+            if not line.startswith("--- "):
+                index += 1
+                continue
+            old_path = self._normalize_patch_path(line[4:].strip())
+            index += 1
+            if index >= len(lines) or not lines[index].startswith("+++ "):
+                raise ToolError("Invalid unified diff: missing +++ file header")
+            new_path = self._normalize_patch_path(lines[index][4:].strip())
+            index += 1
+            target_path = new_path if new_path != "/dev/null" else old_path
+            if target_path == "/dev/null":
+                raise ToolError("Invalid unified diff: both file paths are /dev/null")
+            self.resolve(target_path)
+            source_path = old_path if old_path != "/dev/null" else target_path
+            source = self.resolve(source_path)
+            original_lines: list[str] = []
+            if source.exists():
+                if not source.is_file():
+                    raise ToolError(f"Patch target is not a file: {source_path}")
+                original_lines = source.read_text(encoding="utf-8", errors="replace").splitlines()
+            elif old_path != "/dev/null":
+                raise ToolError(f"Patch target does not exist: {source_path}")
+            patched_lines, added, deleted, index = self._apply_hunks_to_lines(
+                original_lines,
+                lines,
+                index,
+                target_path,
+            )
+            changes.append(
+                PatchFileChange(
+                    old_path=old_path,
+                    new_path=new_path,
+                    target_path=target_path,
+                    old_lines=original_lines,
+                    new_lines=patched_lines,
+                    added_lines=added,
+                    deleted_lines=deleted,
+                    is_delete=new_path == "/dev/null",
+                )
+            )
+        return changes
+
+    def _apply_hunks_to_lines(
+        self,
+        original_lines: list[str],
+        patch_lines: list[str],
+        index: int,
+        target_path: str,
+    ) -> tuple[list[str], int, int, int]:
+        output: list[str] = []
+        source_index = 0
+        added = 0
+        deleted = 0
+        saw_hunk = False
+        while index < len(patch_lines):
+            line = patch_lines[index]
+            if line.startswith("--- "):
+                break
+            if not line.startswith("@@ "):
+                index += 1
+                continue
+            saw_hunk = True
+            match = re.match(r"@@ -(?P<old_start>\d+)(?:,\d+)? \+(?P<new_start>\d+)(?:,\d+)? @@", line)
+            if not match:
+                raise ToolError(f"Invalid hunk header for {target_path}: {line}")
+            old_start = int(match.group("old_start"))
+            hunk_source_index = max(0, old_start - 1)
+            if hunk_source_index < source_index:
+                raise ToolError(f"Overlapping hunk for {target_path}: {line}")
+            output.extend(original_lines[source_index:hunk_source_index])
+            source_index = hunk_source_index
+            index += 1
+            while index < len(patch_lines):
+                hunk_line = patch_lines[index]
+                if hunk_line.startswith("@@ ") or hunk_line.startswith("--- "):
+                    break
+                if hunk_line.startswith("\\"):
+                    index += 1
+                    continue
+                if not hunk_line:
+                    raise ToolError(f"Invalid empty patch line for {target_path}; expected context, +, -, or hunk header")
+                marker = hunk_line[0]
+                value = hunk_line[1:]
+                if marker == " ":
+                    if source_index >= len(original_lines) or original_lines[source_index] != value:
+                        raise ToolError(f"Patch context mismatch in {target_path}: {value!r}")
+                    output.append(value)
+                    source_index += 1
+                elif marker == "-":
+                    if source_index >= len(original_lines) or original_lines[source_index] != value:
+                        raise ToolError(f"Patch removal mismatch in {target_path}: {value!r}")
+                    source_index += 1
+                    deleted += 1
+                elif marker == "+":
+                    output.append(value)
+                    added += 1
+                else:
+                    raise ToolError(f"Invalid patch line for {target_path}: {hunk_line}")
+                index += 1
+        if not saw_hunk:
+            raise ToolError(f"Unified diff for {target_path} contains no hunks")
+        output.extend(original_lines[source_index:])
+        return output, added, deleted, index
+
+    def _normalize_patch_path(self, raw_path: str) -> str:
+        path = raw_path.split("\t", 1)[0].strip()
+        if not path:
+            raise ToolError("Invalid unified diff: empty file path")
+        if path == "/dev/null":
+            return path
+        if path.startswith("a/") or path.startswith("b/"):
+            path = path[2:]
+        candidate = Path(path)
+        if candidate.is_absolute() or ".." in candidate.parts:
+            raise ToolError(f"Path escapes workspace: {path}")
+        return candidate.as_posix()
 
     def run_shell(self, command: str, timeout: int | None = None) -> str:
         command_decision = classify_shell_command(command)

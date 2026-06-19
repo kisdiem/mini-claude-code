@@ -122,6 +122,39 @@ python -m mini_cc.desktop_launcher
 
 API Key 只保存在本机 `.mini_cc/desktop-settings.json`，该目录已加入 `.gitignore`，不会提交到 GitHub。
 
+## Coding Reliability Loop
+
+Coding Reliability Loop 可以理解成“代码任务强验证闭环”。它解决的问题是：agent 不能只会改文件，还必须在改完后运行真正的测试或检查命令。
+
+开启后，runtime 会跟踪：
+
+- 是否修改了代码；
+- 修改了哪些文件；
+- 是否运行过真实验证命令；
+- 最后一次验证是否通过；
+- 验证失败后是否做过最小修复。
+
+示例命令：
+
+```powershell
+py -3 -m mini_cc --s20 --coding-loop --permission auto --workspace . "fix the failing test"
+```
+
+带明确测试命令的 harness 运行：
+
+```powershell
+py -3 -m mini_cc run --provider openai --model gpt-5 --s20 --coding-loop --test-command "python -m unittest discover" --permission-mode bypass --workspace . --output-format json --prompt "fix the bug"
+```
+
+关键规则：
+
+- `apply_patch` 用于稳定代码编辑，比复杂场景下的 `replace_text` 更不容易因为旧字符串匹配失败而卡住；
+- 只有 `run_shell` 里看起来像测试/检查的命令才算 verification；
+- `git_diff` 只能说明“改了什么”，不能说明“代码可用”；
+- 每次运行会写出 `.mini_cc/task-success/last-run.json`，方便向甲方展示本次代码任务是否验证通过。
+
+详细架构见：`docs/coding_reliability_loop.md`。
+
 ## 生产可用性
 
 本项目已经补充了面向交付的基础工程能力：

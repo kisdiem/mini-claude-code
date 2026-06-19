@@ -46,6 +46,97 @@ class ToolRunnerTests(unittest.TestCase):
             self.assertFalse(search.is_error, search.content)
             self.assertIn("notes/example.txt:2", search.content)
 
+    def test_apply_patch_modifies_file_and_emits_file_changed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            Path(root, "app.py").write_text("x = 1\n", encoding="utf-8")
+            hooks = HookRuntime(root / "hooks.log")
+            runner = ToolRunner(root, permission="auto", hooks=hooks)
+
+            result = runner.run(
+                "apply_patch",
+                {
+                    "patch": "--- a/app.py\n+++ b/app.py\n@@ -1 +1 @@\n-x = 1\n+x = 2\n",
+                },
+            )
+
+            self.assertFalse(result.is_error, result.content)
+            self.assertEqual(Path(root, "app.py").read_text(encoding="utf-8"), "x = 2\n")
+            self.assertIn("changed_files: app.py", result.content)
+            rows = [json.loads(line) for line in Path(root, "hooks.log").read_text(encoding="utf-8").splitlines()]
+            self.assertIn("FileChanged", [row["event"] for row in rows])
+
+    def test_apply_patch_dry_run_does_not_modify_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            Path(root, "app.py").write_text("x = 1\n", encoding="utf-8")
+            runner = ToolRunner(root, permission="auto")
+
+            result = runner.run(
+                "apply_patch",
+                {
+                    "patch": "--- a/app.py\n+++ b/app.py\n@@ -1 +1 @@\n-x = 1\n+x = 2\n",
+                    "dry_run": True,
+                },
+            )
+
+            self.assertFalse(result.is_error, result.content)
+            self.assertEqual(Path(root, "app.py").read_text(encoding="utf-8"), "x = 1\n")
+            self.assertIn("dry_run=true", result.content)
+
+    def test_apply_patch_blocks_path_escape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = ToolRunner(Path(tmp), permission="auto")
+
+            result = runner.run(
+                "apply_patch",
+                {
+                    "patch": "--- /dev/null\n+++ b/../evil.py\n@@ -0,0 +1 @@\n+bad\n",
+                },
+            )
+
+            self.assertTrue(result.is_error)
+            self.assertIn("escapes workspace", result.content)
+
+    def test_apply_patch_failure_reports_clear_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            Path(root, "app.py").write_text("x = 1\n", encoding="utf-8")
+            runner = ToolRunner(root, permission="auto")
+
+            result = runner.run(
+                "apply_patch",
+                {
+                    "patch": "--- a/app.py\n+++ b/app.py\n@@ -1 +1 @@\n-x = 999\n+x = 2\n",
+                },
+            )
+
+            self.assertTrue(result.is_error)
+            self.assertIn("mismatch", result.content)
+            self.assertEqual(Path(root, "app.py").read_text(encoding="utf-8"), "x = 1\n")
+
+    def test_apply_patch_multi_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            Path(root, "a.txt").write_text("a\n", encoding="utf-8")
+            Path(root, "b.txt").write_text("b\n", encoding="utf-8")
+            runner = ToolRunner(root, permission="auto")
+
+            result = runner.run(
+                "apply_patch",
+                {
+                    "patch": (
+                        "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-a\n+aa\n"
+                        "--- a/b.txt\n+++ b/b.txt\n@@ -1 +1 @@\n-b\n+bb\n"
+                    ),
+                },
+            )
+
+            self.assertFalse(result.is_error, result.content)
+            self.assertEqual(Path(root, "a.txt").read_text(encoding="utf-8"), "aa\n")
+            self.assertEqual(Path(root, "b.txt").read_text(encoding="utf-8"), "bb\n")
+            self.assertIn("changed_files: a.txt, b.txt", result.content)
+
     def test_read_only_denies_write(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runner = ToolRunner(Path(tmp), permission="read-only")

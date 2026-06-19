@@ -20,6 +20,7 @@ from .bench import (
     write_benchmark_report,
 )
 from .config import DEFAULT_OPENAI_MODEL, build_config, load_env_file
+from .coding_loop import CodingLoopPolicy
 from .governance import load_governance_config
 from .hooks import HookRuntime, load_configured_hooks
 from .llm import AnthropicProvider, MockProvider, OpenAIProvider
@@ -170,6 +171,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--mock", action="store_true", help="Use deterministic mock provider.")
     parser.add_argument("--s20", action="store_true", help="Enable the comprehensive S20 toolset.")
     parser.add_argument("--max-turns", type=int, default=8, help="Maximum model/tool loop turns.")
+    parser.add_argument("--coding-loop", action="store_true", help="Enable Coding Reliability Loop for code modification tasks.")
+    parser.add_argument("--no-coding-loop", action="store_true", help="Disable Coding Reliability Loop, including the S20 default.")
+    parser.add_argument("--test-command", help="Explicit verification command for Coding Reliability Loop.")
+    parser.add_argument("--max-repair-attempts", type=int, default=3, help="Maximum repair attempts after failed verification.")
+    parser.add_argument(
+        "--require-verification",
+        action="store_true",
+        help="Force verification after any write-file task when Coding Reliability Loop is enabled.",
+    )
     parser.add_argument(
         "--max-nested-subagent-depth",
         type=int,
@@ -503,6 +513,18 @@ def build_agent(args: argparse.Namespace, output: Callable[[str], None] = print)
         )
 
     provider = make_provider()
+    coding_loop_enabled = (args.coding_loop or args.require_verification or args.s20) and not args.no_coding_loop
+    coding_loop = (
+        CodingLoopPolicy(
+            config.workspace,
+            enabled=True,
+            test_command=args.test_command,
+            max_repair_attempts=args.max_repair_attempts,
+            require_verification=args.require_verification,
+        )
+        if coding_loop_enabled
+        else None
+    )
     system_prompt = system_prompt_for_workspace(
         S20_SYSTEM_PROMPT if args.s20 else SYSTEM_PROMPT,
         config.workspace,
@@ -536,6 +558,7 @@ def build_agent(args: argparse.Namespace, output: Callable[[str], None] = print)
             compaction_token_budget=args.conversation_compaction_token_budget,
             compaction_keep_recent_messages=args.conversation_compaction_keep_recent,
             model_context_token_budget=args.model_context_token_budget,
+            coding_loop=coding_loop,
         )
     return Agent(
         provider,
@@ -546,6 +569,7 @@ def build_agent(args: argparse.Namespace, output: Callable[[str], None] = print)
         compaction_token_budget=args.conversation_compaction_token_budget,
         compaction_keep_recent_messages=args.conversation_compaction_keep_recent,
         model_context_token_budget=args.model_context_token_budget,
+        coding_loop=coding_loop,
     )
 
 

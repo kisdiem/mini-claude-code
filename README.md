@@ -72,6 +72,36 @@ $env:PYTHONDONTWRITEBYTECODE='1'
 & $py -m unittest discover
 ```
 
+## Coding Reliability Loop
+
+Coding Reliability Loop moves code tasks from "the agent can call tools" to
+"the agent must verify after editing." When enabled, the runtime tracks file
+edits, refuses to finish after code changes without a real test/check command,
+asks the model to repair failed verification, and writes a task-success artifact.
+
+Run with S20:
+
+```powershell
+py -3 -m mini_cc --s20 --coding-loop --permission auto --workspace . "fix the failing test"
+```
+
+Harness-style run with an explicit test command:
+
+```powershell
+py -3 -m mini_cc run --provider openai --model gpt-5 --s20 --coding-loop --test-command "python -m unittest discover" --permission-mode bypass --workspace . --output-format json --prompt "fix the bug"
+```
+
+Key rules:
+
+- `apply_patch` applies unified diffs and is safer than exact-string
+  replacement for larger code edits.
+- Only test/check commands run through `run_shell` count as verification.
+- `git_diff` is useful diff evidence, but it is not pass/fail evidence.
+- The latest task outcome is written to `.mini_cc/task-success/last-run.json`.
+
+See [docs/coding_reliability_loop.md](docs/coding_reliability_loop.md) for the
+runtime flow.
+
 ## Demo Package
 
 Start with:

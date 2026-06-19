@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from typing import Any, Callable
 
+from .coding_loop import CodingLoopPolicy
 from .hooks import HookRuntime
 from .llm import Provider
 from .session import AgentSession, SessionStore
@@ -15,8 +16,10 @@ SYSTEM_PROMPT = """You are Mini Claude Code, a local coding assistant.
 Work like a careful coding agent:
 - Inspect the workspace before changing files.
 - Use tools for file reads, searches, edits, and commands.
+- Prefer apply_patch for code edits when exact string replacement is fragile.
 - Keep edits minimal and explain important tradeoffs.
 - Never claim a command or edit succeeded unless a tool result confirms it.
+- For code modification tasks, run a real verification command after editing; git_status, git_diff, context_snapshot, list_files, read_file, and search_text are not verification.
 - If a task needs writes or shell commands, ask through the available tools and obey permission denials.
 """
 
@@ -56,6 +59,7 @@ class Agent:
         compaction_token_budget: int = 6000,
         compaction_keep_recent_messages: int = 6,
         model_context_token_budget: int = 8000,
+        coding_loop: CodingLoopPolicy | None = None,
     ) -> None:
         self.provider = provider
         self.tools = tools
@@ -70,9 +74,12 @@ class Agent:
         self.compaction_token_budget = max(1, int(compaction_token_budget))
         self.compaction_keep_recent_messages = max(2, int(compaction_keep_recent_messages))
         self.model_context_token_budget = max(256, int(model_context_token_budget))
+        self.coding_loop = coding_loop
 
     def run(self, prompt: str, *, resume_session_id: str | None = None) -> None:
         started = time.perf_counter()
+        if self.coding_loop is not None:
+            self.coding_loop.start(prompt)
         if self.hook_runtime is not None:
             prompt_decision = self.hook_runtime.user_prompt_submit(
                 prompt,
@@ -204,6 +211,8 @@ class Agent:
                             self.output(f"[tool error] {result.content}\n")
                         else:
                             self.output(f"[tool ok] {result.content[:800]}\n")
+                        if self.coding_loop is not None:
+                            self.coding_loop.observe_tool_result(name, tool_input, result)
                         tool_results.append(
                             {
                                 "type": "tool_result",
@@ -218,6 +227,27 @@ class Agent:
                     self.session_store.update_messages(session, self.messages)
                 turn += 1
                 if not tool_results:
+                    if self.coding_loop is not None:
+                        decision = self.coding_loop.finish_decision()
+                        if not decision.allow_finish:
+                            self.output(f"\n[coding-loop] {decision.reason}\n")
+                            self.messages.append({"role": "user", "content": decision.instruction})
+                            if self.session_store is not None and session is not None:
+                                self.session_store.record(
+                                    session,
+                                    "coding_loop_gate",
+                                    {
+                                        "reason": decision.reason,
+                                        "status": decision.status,
+                                        "state": self.coding_loop.state.to_json(),
+                                    },
+                                )
+                                self.session_store.update_messages(session, self.messages)
+                            continue
+                        final_report = self.coding_loop.final_report(status=decision.status)
+                        if final_report:
+                            self.output("\n" + final_report)
+                        self.coding_loop.write_artifact(status=decision.status)
                     if self.workflow is not None and plan is not None and self.session_store is not None and session is not None:
                         verification = self.workflow.verifier.verify(plan, executions)
                         self.session_store.record(session, "verifier_result", verification.to_json())
@@ -245,6 +275,8 @@ class Agent:
                     self.session_store.update_messages(session, self.messages)
         except Exception as exc:
             status = "failed"
+            if self.coding_loop is not None:
+                self.coding_loop.write_artifact(status="failed")
             if self.session_store is not None and session is not None:
                 self.session_store.record(session, "error", {"message": str(exc)})
                 self.session_store.finish(session, status=status)
@@ -259,6 +291,8 @@ class Agent:
             raise
 
         status = "max_turns"
+        if self.coding_loop is not None:
+            self.coding_loop.write_artifact(status="failed")
         if self.session_store is not None and session is not None:
             if self.workflow is not None and plan is not None:
                 verification = self.workflow.verifier.verify(plan, executions)

@@ -67,15 +67,27 @@ READ_COMMANDS = {
 VERIFY_COMMANDS = {
     "cargo test",
     "dotnet test",
+    "gradle test",
     "go test",
+    "mvn test",
+    "mypy",
     "npm test",
+    "npm run lint",
     "npm run test",
     "pnpm test",
+    "pnpm run lint",
+    "pnpm run test",
     "pytest",
     "py -3 -m unittest",
+    "py -3 -m pytest",
+    "python -m mypy",
     "python -m pytest",
     "python -m unittest",
+    "ruff",
     "ruff check",
+    "tsc",
+    "yarn lint",
+    "yarn test",
 }
 
 NETWORK_COMMANDS = {

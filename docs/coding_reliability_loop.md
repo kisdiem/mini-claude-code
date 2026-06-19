@@ -1,0 +1,123 @@
+# Coding Reliability Loop
+
+Coding Reliability Loop v1 is the runtime guard for code modification tasks.
+It is intentionally small: it does not replace MCP, hooks, subagents, memory, or
+the existing S20 workflow. It adds one missing production behavior: after code is
+changed, the agent must run a real verification command before it can finish.
+
+## Problem
+
+Before this loop, the agent could:
+
+- edit files and immediately answer;
+- treat `git_diff` or `context_snapshot` as enough evidence;
+- run any shell command and still appear verified;
+- stop after a failed test without a repair attempt.
+
+That is useful for demos, but weak for coding reliability. A coding agent should
+prove that the edited code still passes a local deterministic check.
+
+## Flow
+
+```text
+User Prompt
+  |
+  v
+Agent Loop
+  |
+  v
+Inspect Tools
+  |
+  v
+Edit Tool: apply_patch / replace_text / write_file
+  |
+  v
+CodingLoopPolicy marks code_modified
+  |
+  v
+Verification command required
+  |
+  v
+run_shell test
+  |
+  +-- passed -> final report
+  +-- failed -> repair loop
+  +-- max attempts -> failed report
+```
+
+## Runtime Rules
+
+- `write_file`, `replace_text`, and `apply_patch` mark the run as code-modified.
+- `git_status`, `git_diff`, `context_snapshot`, `list_files`, `read_file`, and
+  `search_text` are not verification.
+- `run_shell` counts as verification only when the command looks like a real
+  test or check command, such as `python -m unittest discover`, `pytest`,
+  `npm test`, `npm run lint`, `ruff`, `mypy`, `tsc`, `cargo test`, or
+  `go test ./...`.
+- If code was changed and no verification command ran, the runtime appends a
+  forced follow-up instruction instead of finishing.
+- If verification failed and the repair limit has not been reached, the runtime
+  asks for one minimal repair and another verification run.
+- If verification passes, the final answer is allowed.
+- If the repair limit is reached, the final answer is allowed but must report
+  the failed verification and remaining issue.
+
+## Test Command Discovery
+
+The CLI can receive an explicit command:
+
+```powershell
+py -3 -m mini_cc --s20 --coding-loop --test-command "python -m unittest discover" --workspace . "fix the bug"
+```
+
+Without `--test-command`, the runtime tries a simple local discovery:
+
+- `package.json` with `scripts.test` → `npm test`;
+- `package.json` with `scripts.lint` → `npm run lint`;
+- `Cargo.toml` → `cargo test`;
+- `go.mod` → `go test ./...`;
+- `pytest.ini` or pytest config → `python -m pytest`;
+- unittest-style `tests/` → `python -m unittest discover`;
+- other `tests/` → `python -m pytest`.
+
+If nothing is detected, the agent is told to inspect the project and choose the
+most local deterministic test or lint command.
+
+## apply_patch
+
+`apply_patch` is a workspace-safe unified diff tool. It exists because
+`replace_text` is intentionally strict and can fail when large or fragile exact
+strings are involved.
+
+It supports:
+
+- common unified diff headers such as `--- a/file.py` and `+++ b/file.py`;
+- multi-file patches;
+- `dry_run=true` validation without writing files;
+- workspace path enforcement;
+- `FileChanged` hook events for each modified file.
+
+It does not depend on system `git`; the common unified diff path is implemented
+in Python so tests work on Windows and in CI.
+
+## Task Success Artifact
+
+Every enabled run writes:
+
+```text
+.mini_cc/task-success/last-run.json
+```
+
+The artifact records:
+
+- whether the coding loop was enabled;
+- whether code was modified;
+- modified files;
+- verification commands;
+- last verification result;
+- repair attempts;
+- status: `passed`, `failed`, `not_required`, or `max_attempts_reached`;
+- timestamp.
+
+This file is meant for demos and CI-like checks. It gives a reviewer a concrete
+artifact instead of asking them to trust a final chat message.
