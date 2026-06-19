@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mini-claude-code"
-version = "3.6.0"
+version = "3.6.1"
 description = "A teaching-oriented Claude Code style AI Agent runtime with tools, hooks, MCP, subagents, permissions, and desktop UI."
 readme = "README.md"
 requires-python = ">=3.10"

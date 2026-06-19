@@ -3,6 +3,44 @@
 This file records architecture iterations, benchmark status, and known
 validation limits for the teaching agent.
 
+## 3.6.1 - Verification Semantics Cleanup
+
+Date: 2026-06-20
+
+Status: implemented and locally tested.
+
+What changed:
+
+- upgraded package version to `3.6.1`;
+- split Runtime Evidence from Code Verification in workflow verification
+  results;
+- stopped treating `git_status`, `git_diff`, `context_snapshot`, and similar
+  inspection tools as code verification;
+- reused `CodingLoopPolicy` verification command detection in workflow/report
+  logic;
+- added workflow and agent-level tests for:
+  - `run_shell("git status")` and `run_shell("echo ok")` not counting as code
+    verification;
+  - `python -m unittest discover` counting as code verification;
+  - changed code plus only `git_diff` or `context_snapshot` still being blocked
+    by the coding loop;
+- updated README and coding loop docs to explain the two-layer verification
+  model.
+
+Test status:
+
+- targeted workflow and coding-loop tests passed locally;
+- full `python -m unittest discover` passed locally:
+  - 245 tests;
+  - `OK`.
+
+Important interpretation:
+
+- Runtime Evidence proves what the agent inspected or collected.
+- Code Verification proves that changed code passed a real test/check command.
+- For code modification tasks, `CodingLoopPolicy` remains the source of truth
+  for task-success verification.
+
 ## 3.6 - Coding Task Success Loop
 
 Date: 2026-06-20

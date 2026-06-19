@@ -1,7 +1,7 @@
 # Mini Claude Code
 
 This is a teaching implementation of a Claude-Code-like coding agent. The first
-version showed the minimal loop. The current `3.6.0` version adds a Coding Task
+version showed the minimal loop. The current `3.6.1` version adds a Coding Task
 Success Loop on top of the existing evidence-gated reports, tool-use traces,
 MCP/hook validation, subagent/context runtime, and demo packaging.
 
@@ -112,6 +112,19 @@ Key rules:
 - `git_status` is workspace evidence, but it is not pass/fail evidence.
 - `context_snapshot` is context evidence, but it is not pass/fail evidence.
 - The latest task outcome is written to `.mini_cc/task-success/last-run.json`.
+
+Important distinction:
+
+- Runtime Evidence proves what the agent inspected or collected, such as
+  `git_diff`, `git_status`, `context_snapshot`, `list_files`, `read_file`, and
+  `search_text`.
+- Code Verification proves whether a code task passed a real local check. It
+  only comes from test/lint/typecheck commands executed through `run_shell`,
+  such as `python -m unittest discover`, `pytest`, `npm test`, `ruff`, `mypy`,
+  `cargo test`, or `go test ./...`.
+- For code modification tasks, `CodingLoopPolicy` is the source of truth for
+  task-success verification. Runtime evidence can support the report, but it
+  cannot make changed code count as verified.
 
 See [docs/coding_reliability_loop.md](docs/coding_reliability_loop.md) for the
 runtime flow.
@@ -1388,8 +1401,8 @@ S20 mode wraps the model/tool loop with a lightweight structured workflow:
 - `Planner`: creates a conservative inspect/execute/verify plan before the
   first model call, or validates a model-authored JSON plan in S20 mode;
 - `Executor`: classifies each tool call against the active plan;
-- `Verifier`: records whether the run had tool failures and whether an
-  explicit verification signal ran.
+- `Verifier`: records whether the run had tool failures, runtime evidence, and
+  a real code verification command.
 
 The workflow now also carries a verification policy based on task risk.
 
@@ -1397,12 +1410,12 @@ In plain terms:
 
 - low-risk read/summarize tasks can finish without a dedicated verification
   step;
-- write, Docker, network, package-manager, and benchmark-like tasks require an
-  explicit verification signal;
-- a verification signal means the agent actually ran a real test/check command
+- write, Docker, network, package-manager, and benchmark-like tasks require a
+  real code verification command;
+- a code verification command means the agent actually ran a real test/check command
   through `run_shell`; `context_snapshot`, `git_diff`, `git_status`, and
   `subagent_pipeline` are evidence/inspection tools, not pass evidence;
-- if a high-risk task makes changes but never reaches that verification step,
+- if a high-risk task makes changes but never reaches that code verification step,
   the verifier marks the run as not OK instead of quietly treating it as good
   enough.
 
@@ -1422,7 +1435,9 @@ In plain terms:
 - `evidence_ledger` answers "what concrete tool evidence do we have?";
 - each row records the turn, tool name, plan step, status, evidence kind, and a
   short result summary;
-- successful verify-step tools are marked as verification evidence;
+- inspection tools such as `git_diff`, `git_status`, and `context_snapshot` are
+  marked as runtime evidence;
+- real test/check commands through `run_shell` are marked as code verification;
 - failed tools are marked as failure evidence;
 - `plan_repair` answers "if this run is not in a good state, what should be
   repaired next?";

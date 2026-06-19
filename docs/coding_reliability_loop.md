@@ -1,6 +1,6 @@
 # Coding Task Success Loop
 
-Coding Task Success Loop v3.6 is the runtime guard for code modification tasks.
+Coding Task Success Loop v3.6.1 is the runtime guard for code modification tasks.
 It is intentionally small: it does not replace MCP, hooks, subagents, memory, or
 the existing S20 workflow. It adds one missing production behavior: after code is
 changed, the agent must run a real verification command before it can finish.
@@ -62,6 +62,43 @@ run_shell test
 - If verification passes, the final answer is allowed.
 - If the repair limit is reached, the final answer is allowed but must report
   the failed verification and remaining issue.
+
+## Verification Semantics
+
+The runtime separates two concepts that used to be easy to mix up.
+
+Runtime Evidence means the agent inspected or collected context. Examples:
+
+- `list_files`;
+- `read_file`;
+- `search_text`;
+- `git_status`;
+- `git_diff`;
+- `context_snapshot`;
+- `subagent_pipeline`;
+- `todo_read`;
+- `memory_read`.
+
+These tools are useful evidence for a report, but they do not prove that changed
+code works.
+
+Code Verification means a real local check ran through `run_shell` and exited
+successfully. Examples:
+
+- `python -m unittest discover`;
+- `python -m pytest`;
+- `pytest`;
+- `npm test`;
+- `npm run lint`;
+- `ruff check .`;
+- `mypy .`;
+- `cargo test`;
+- `go test ./...`;
+- `make test`.
+
+For code modification tasks, `CodingLoopPolicy` is the source of truth. A
+successful `git_diff`, `git_status`, or `context_snapshot` can appear in the
+evidence ledger, but it cannot set task success to passed.
 
 ## Test Command Discovery
 

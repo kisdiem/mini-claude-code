@@ -4,6 +4,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from .coding_loop import is_verification_command, parse_exit_code
 from .llm import Provider
 from .permission import PermissionRisk
 
@@ -42,6 +43,8 @@ class ExecutionRecord:
     is_error: bool
     chars: int
     summary: str = ""
+    tool_input: dict[str, Any] = field(default_factory=dict)
+    exit_code: int | None = None
 
 
 @dataclass(frozen=True)
@@ -77,6 +80,11 @@ class VerificationResult:
     verification_required: bool = False
     failed_tools: list[str] = field(default_factory=list)
     verification_tools: list[str] = field(default_factory=list)
+    has_runtime_evidence: bool = False
+    runtime_evidence_tools: list[str] = field(default_factory=list)
+    has_code_verification: bool = False
+    code_verification_passed: bool = False
+    code_verification_commands: list[str] = field(default_factory=list)
     evidence_ledger: list[EvidenceItem] = field(default_factory=list)
     plan_repair: PlanRepair = field(default_factory=lambda: PlanRepair(False))
 
@@ -295,8 +303,7 @@ def extract_response_text(response: Any) -> str:
 class Executor:
     """Classify tool executions against the current plan."""
 
-    VERIFY_TOOLS = {"run_shell"}
-    INSPECT_TOOLS = {
+    RUNTIME_EVIDENCE_TOOLS = {
         "list_files",
         "read_file",
         "search_text",
@@ -311,44 +318,82 @@ class Executor:
         "context_snapshot",
         "subagent_pipeline",
     }
+    INSPECT_TOOLS = RUNTIME_EVIDENCE_TOOLS
+    POTENTIAL_VERIFICATION_TOOLS = {"run_shell"}
 
     def classify_tool(self, name: str) -> str:
         if name in self.INSPECT_TOOLS:
             return "inspect"
-        if name in self.VERIFY_TOOLS:
+        if name in self.POTENTIAL_VERIFICATION_TOOLS:
             return "verify"
         return "execute"
 
 
 class Verifier:
-    """Summarize whether the run reached a defensible verification state."""
+    """Summarize runtime evidence and real code verification separately."""
 
     def verify(self, plan: TaskPlan, executions: list[ExecutionRecord]) -> VerificationResult:
         verification_required = plan.verification_policy == "required"
         failed_tools = [record.tool for record in executions if record.is_error]
-        verification_tools = [record.tool for record in executions if record.planned_step == "verify" and not record.is_error]
+        runtime_evidence_tools = self._runtime_evidence_tools(executions)
+        code_verification_records = self._code_verification_records(executions)
+        verification_tools = [record.tool for record in code_verification_records]
+        code_verification_commands = [self._command(record) for record in code_verification_records]
+        last_code_verification = code_verification_records[-1] if code_verification_records else None
+        has_code_verification = last_code_verification is not None
+        code_verification_passed = bool(
+            last_code_verification is not None
+            and not last_code_verification.is_error
+            and self._exit_code(last_code_verification) == 0
+        )
         evidence_ledger = self._build_evidence_ledger(executions)
         plan_repair = self._build_plan_repair(plan, executions, verification_required)
         if failed_tools:
             return VerificationResult(
                 ok=False,
-                verified=bool(verification_tools),
+                verified=code_verification_passed,
                 reason="one or more tool executions failed",
                 verification_policy=plan.verification_policy,
                 verification_required=verification_required,
                 failed_tools=failed_tools,
                 verification_tools=verification_tools,
+                has_runtime_evidence=bool(runtime_evidence_tools),
+                runtime_evidence_tools=runtime_evidence_tools,
+                has_code_verification=has_code_verification,
+                code_verification_passed=code_verification_passed,
+                code_verification_commands=code_verification_commands,
                 evidence_ledger=evidence_ledger,
                 plan_repair=plan_repair,
             )
-        if verification_tools:
+        if code_verification_passed:
             return VerificationResult(
                 ok=True,
                 verified=True,
-                reason="verification tool executed successfully",
+                reason="code verification command passed",
                 verification_policy=plan.verification_policy,
                 verification_required=verification_required,
                 verification_tools=verification_tools,
+                has_runtime_evidence=bool(runtime_evidence_tools),
+                runtime_evidence_tools=runtime_evidence_tools,
+                has_code_verification=has_code_verification,
+                code_verification_passed=True,
+                code_verification_commands=code_verification_commands,
+                evidence_ledger=evidence_ledger,
+                plan_repair=plan_repair,
+            )
+        if has_code_verification:
+            return VerificationResult(
+                ok=False,
+                verified=False,
+                reason="code verification command failed",
+                verification_policy=plan.verification_policy,
+                verification_required=verification_required,
+                verification_tools=verification_tools,
+                has_runtime_evidence=bool(runtime_evidence_tools),
+                runtime_evidence_tools=runtime_evidence_tools,
+                has_code_verification=True,
+                code_verification_passed=False,
+                code_verification_commands=code_verification_commands,
                 evidence_ledger=evidence_ledger,
                 plan_repair=plan_repair,
             )
@@ -356,20 +401,30 @@ class Verifier:
             return VerificationResult(
                 ok=False,
                 verified=False,
-                reason="task risk requires an explicit verification or report tool",
+                reason="task risk requires a real code verification command",
                 verification_policy=plan.verification_policy,
                 verification_required=True,
                 verification_tools=[],
+                has_runtime_evidence=bool(runtime_evidence_tools),
+                runtime_evidence_tools=runtime_evidence_tools,
+                has_code_verification=False,
+                code_verification_passed=False,
+                code_verification_commands=[],
                 evidence_ledger=evidence_ledger,
                 plan_repair=plan_repair,
             )
         return VerificationResult(
             ok=True,
             verified=False,
-            reason="no tool failures observed, but no explicit verification tool ran",
+            reason="no tool failures observed, but no code verification command ran",
             verification_policy=plan.verification_policy,
             verification_required=False,
             verification_tools=[],
+            has_runtime_evidence=bool(runtime_evidence_tools),
+            runtime_evidence_tools=runtime_evidence_tools,
+            has_code_verification=False,
+            code_verification_passed=False,
+            code_verification_commands=[],
             evidence_ledger=evidence_ledger,
             plan_repair=plan_repair,
         )
@@ -378,7 +433,11 @@ class Verifier:
         ledger: list[EvidenceItem] = []
         for record in executions:
             status = "error" if record.is_error else "ok"
-            kind = "verification" if record.planned_step == "verify" and not record.is_error else "tool"
+            kind = "tool"
+            if not record.is_error and record.tool in Executor.RUNTIME_EVIDENCE_TOOLS:
+                kind = "runtime_evidence"
+            elif not record.is_error and self._is_code_verification(record):
+                kind = "code_verification"
             if record.is_error:
                 kind = "failure"
             ledger.append(
@@ -393,6 +452,32 @@ class Verifier:
             )
         return ledger
 
+    def _runtime_evidence_tools(self, executions: list[ExecutionRecord]) -> list[str]:
+        tools: list[str] = []
+        for record in executions:
+            if record.is_error or record.tool not in Executor.RUNTIME_EVIDENCE_TOOLS:
+                continue
+            if record.tool not in tools:
+                tools.append(record.tool)
+        return tools
+
+    def _code_verification_records(self, executions: list[ExecutionRecord]) -> list[ExecutionRecord]:
+        return [record for record in executions if self._is_code_verification(record)]
+
+    def _is_code_verification(self, record: ExecutionRecord) -> bool:
+        if record.tool != "run_shell":
+            return False
+        return is_verification_command(self._command(record))
+
+    def _command(self, record: ExecutionRecord) -> str:
+        command = record.tool_input.get("command")
+        return str(command) if command is not None else ""
+
+    def _exit_code(self, record: ExecutionRecord) -> int | None:
+        if record.exit_code is not None:
+            return record.exit_code
+        return parse_exit_code(record.summary)
+
     def _build_plan_repair(
         self,
         plan: TaskPlan,
@@ -400,16 +485,29 @@ class Verifier:
         verification_required: bool,
     ) -> PlanRepair:
         observed_steps = {record.planned_step for record in executions}
+        code_verification_records = [record for record in executions if self._is_code_verification(record)]
+        has_code_verification = bool(code_verification_records)
+        last_code_verification = code_verification_records[-1] if code_verification_records else None
+        code_verification_passed = bool(
+            last_code_verification is not None
+            and not last_code_verification.is_error
+            and self._exit_code(last_code_verification) == 0
+        )
         relevant_step_ids = [step.id for step in plan.steps if step.id != "report"]
         missing_steps = [step_id for step_id in relevant_step_ids if step_id not in observed_steps]
+        if verification_required and not has_code_verification and "verify" not in missing_steps:
+            missing_steps.append("verify")
         reasons: list[str] = []
         suggested_actions: list[str] = []
         if any(record.is_error for record in executions):
             reasons.append("tool_failure")
             suggested_actions.append("Inspect the failed tool result, fix the cause, and rerun the missing step.")
-        if verification_required and "verify" not in observed_steps:
+        if verification_required and not has_code_verification:
             reasons.append("missing_required_verification")
             suggested_actions.append("Run a real verification command through run_shell before treating the task as complete.")
+        if has_code_verification and not code_verification_passed:
+            reasons.append("code_verification_failed")
+            suggested_actions.append("Inspect the failed verification output, make one minimal repair, and rerun the verification command.")
         for step_id in missing_steps:
             if step_id == "inspect":
                 suggested_actions.append("Inspect workspace context before continuing with more edits.")

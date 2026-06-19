@@ -9,6 +9,7 @@ from typing import Any
 from mini_cc.agent import Agent
 from mini_cc.coding_loop import CodingLoopPolicy, discover_test_command, is_verification_command
 from mini_cc.llm import MockBlock, MockResponse
+from mini_cc.s20 import S20ToolRunner
 from mini_cc.tools import ToolResult, ToolRunner
 
 
@@ -66,6 +67,75 @@ class WriteThenVerifyProvider:
                 ]
             )
         return MockResponse([MockBlock(type="text", text="final answer")])
+
+
+class WriteThenEvidenceThenFinalProvider:
+    def __init__(self, evidence_tool: str) -> None:
+        self.evidence_tool = evidence_tool
+        self.prompts: list[Any] = []
+        self.calls = 0
+
+    def complete(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]], system: str) -> MockResponse:
+        del tools, system
+        self.prompts.append(messages[-1].get("content"))
+        self.calls += 1
+        if self.calls == 1:
+            return MockResponse(
+                [
+                    MockBlock(
+                        type="tool_use",
+                        id="toolu_write",
+                        name="write_file",
+                        input={"path": "app.py", "content": "print('ok')\n"},
+                    )
+                ]
+            )
+        if self.calls == 2:
+            return MockResponse(
+                [
+                    MockBlock(
+                        type="tool_use",
+                        id="toolu_evidence",
+                        name=self.evidence_tool,
+                        input={},
+                    )
+                ]
+            )
+        return MockResponse([MockBlock(type="text", text="done")])
+
+
+class WriteThenFailingVerifyProvider:
+    def __init__(self) -> None:
+        self.prompts: list[Any] = []
+        self.calls = 0
+
+    def complete(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]], system: str) -> MockResponse:
+        del tools, system
+        self.prompts.append(messages[-1].get("content"))
+        self.calls += 1
+        if self.calls == 1:
+            return MockResponse(
+                [
+                    MockBlock(
+                        type="tool_use",
+                        id="toolu_write",
+                        name="write_file",
+                        input={"path": "app.py", "content": "print('ok')\n"},
+                    )
+                ]
+            )
+        if self.calls == 2:
+            return MockResponse(
+                [
+                    MockBlock(
+                        type="tool_use",
+                        id="toolu_test",
+                        name="run_shell",
+                        input={"command": "python -m unittest discover", "timeout": 20},
+                    )
+                ]
+            )
+        return MockResponse([MockBlock(type="text", text="done")])
 
 
 class CodingLoopTests(unittest.TestCase):
@@ -187,6 +257,63 @@ class CodingLoopTests(unittest.TestCase):
 
             serialized_prompts = json.dumps(provider.prompts, ensure_ascii=False)
             self.assertIn("Verification required before final answer", serialized_prompts)
+
+    def test_agent_does_not_allow_finish_after_only_git_diff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            provider = WriteThenEvidenceThenFinalProvider("git_diff")
+            agent = Agent(
+                provider,  # type: ignore[arg-type]
+                S20ToolRunner(root, permission="auto"),
+                max_turns=4,
+                output=lambda _text: None,
+                coding_loop=CodingLoopPolicy(root, enabled=True),
+            )
+
+            agent.run("fix bug")
+
+            serialized_prompts = json.dumps(provider.prompts, ensure_ascii=False)
+            self.assertIn("Verification required before final answer", serialized_prompts)
+
+    def test_agent_does_not_allow_finish_after_only_context_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            provider = WriteThenEvidenceThenFinalProvider("context_snapshot")
+            agent = Agent(
+                provider,  # type: ignore[arg-type]
+                S20ToolRunner(root, permission="auto"),
+                max_turns=4,
+                output=lambda _text: None,
+                coding_loop=CodingLoopPolicy(root, enabled=True),
+            )
+
+            agent.run("fix bug")
+
+            serialized_prompts = json.dumps(provider.prompts, ensure_ascii=False)
+            self.assertIn("Verification required before final answer", serialized_prompts)
+
+    def test_agent_enters_repair_loop_after_failed_verification(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            Path(root, "test_failing.py").write_text(
+                "import unittest\n\nclass FailingTest(unittest.TestCase):\n    def test_fail(self):\n        self.assertEqual(1, 2)\n",
+                encoding="utf-8",
+            )
+            provider = WriteThenFailingVerifyProvider()
+            agent = Agent(
+                provider,  # type: ignore[arg-type]
+                ToolRunner(root, permission="auto"),
+                max_turns=4,
+                output=lambda _text: None,
+                coding_loop=CodingLoopPolicy(root, enabled=True, max_repair_attempts=2),
+            )
+
+            agent.run("fix bug")
+
+            serialized_prompts = json.dumps(provider.prompts, ensure_ascii=False)
+            self.assertIn("The last verification command failed", serialized_prompts)
+            artifact = json.loads((root / ".mini_cc" / "task-success" / "last-run.json").read_text(encoding="utf-8"))
+            self.assertGreaterEqual(artifact["repair_attempts"], 1)
 
     def test_agent_allows_finish_after_verification_and_writes_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

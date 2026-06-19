@@ -165,13 +165,13 @@ class StructuredWorkflowTests(unittest.TestCase):
 
         self.assertFalse(result.ok)
         self.assertEqual(result.failed_tools, ["run_shell"])
-        self.assertEqual(result.evidence_ledger[0].kind, "tool")
+        self.assertEqual(result.evidence_ledger[0].kind, "runtime_evidence")
         self.assertEqual(result.evidence_ledger[1].kind, "failure")
         self.assertEqual(result.evidence_ledger[1].summary, "pytest failed")
         self.assertTrue(result.plan_repair.needed)
         self.assertIn("tool_failure", result.plan_repair.reasons)
 
-    def test_git_and_context_tools_are_not_verification(self) -> None:
+    def test_git_and_context_tools_are_runtime_evidence_not_code_verification(self) -> None:
         plan = Planner().plan("edit a file")
         result = Verifier().verify(
             plan,
@@ -185,7 +185,112 @@ class StructuredWorkflowTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertFalse(result.verified)
         self.assertEqual(result.verification_tools, [])
-        self.assertEqual([item.kind for item in result.evidence_ledger], ["tool", "tool", "tool"])
+        self.assertTrue(result.has_runtime_evidence)
+        self.assertEqual(result.runtime_evidence_tools, ["git_status", "git_diff", "context_snapshot"])
+        self.assertFalse(result.has_code_verification)
+        self.assertFalse(result.code_verification_passed)
+        self.assertEqual(result.code_verification_commands, [])
+        self.assertEqual([item.kind for item in result.evidence_ledger], ["runtime_evidence", "runtime_evidence", "runtime_evidence"])
+        self.assertIn("missing_required_verification", result.plan_repair.reasons)
+
+    def test_run_shell_git_status_is_not_code_verification(self) -> None:
+        plan = Planner().plan("edit a file")
+        result = Verifier().verify(
+            plan,
+            [
+                ExecutionRecord(
+                    turn=1,
+                    tool="run_shell",
+                    planned_step="verify",
+                    is_error=False,
+                    chars=20,
+                    summary="exit_code=0\nstdout:\nclean\nstderr:\n",
+                    tool_input={"command": "git status"},
+                    exit_code=0,
+                )
+            ],
+        )
+
+        self.assertFalse(result.ok)
+        self.assertFalse(result.verified)
+        self.assertFalse(result.has_code_verification)
+        self.assertFalse(result.code_verification_passed)
+        self.assertEqual(result.verification_tools, [])
+        self.assertEqual(result.evidence_ledger[0].kind, "tool")
+        self.assertIn("missing_required_verification", result.plan_repair.reasons)
+
+    def test_run_shell_echo_is_not_code_verification(self) -> None:
+        plan = Planner().plan("edit a file")
+        result = Verifier().verify(
+            plan,
+            [
+                ExecutionRecord(
+                    turn=1,
+                    tool="run_shell",
+                    planned_step="verify",
+                    is_error=False,
+                    chars=20,
+                    summary="exit_code=0\nstdout:\nok\nstderr:\n",
+                    tool_input={"command": "echo ok"},
+                    exit_code=0,
+                )
+            ],
+        )
+
+        self.assertFalse(result.ok)
+        self.assertFalse(result.has_code_verification)
+        self.assertEqual(result.code_verification_commands, [])
+
+    def test_unittest_command_is_passing_code_verification(self) -> None:
+        plan = Planner().plan("edit a file")
+        result = Verifier().verify(
+            plan,
+            [
+                ExecutionRecord(
+                    turn=1,
+                    tool="run_shell",
+                    planned_step="verify",
+                    is_error=False,
+                    chars=20,
+                    summary="exit_code=0\nstdout:\nOK\nstderr:\n",
+                    tool_input={"command": "python -m unittest discover"},
+                    exit_code=0,
+                )
+            ],
+        )
+
+        self.assertTrue(result.ok)
+        self.assertTrue(result.verified)
+        self.assertTrue(result.has_code_verification)
+        self.assertTrue(result.code_verification_passed)
+        self.assertEqual(result.code_verification_commands, ["python -m unittest discover"])
+        self.assertEqual(result.verification_tools, ["run_shell"])
+        self.assertEqual(result.evidence_ledger[0].kind, "code_verification")
+
+    def test_unittest_command_failure_is_failed_code_verification(self) -> None:
+        plan = Planner().plan("edit a file")
+        result = Verifier().verify(
+            plan,
+            [
+                ExecutionRecord(
+                    turn=1,
+                    tool="run_shell",
+                    planned_step="verify",
+                    is_error=False,
+                    chars=20,
+                    summary="exit_code=1\nstdout:\nFAIL\nstderr:\nboom\n",
+                    tool_input={"command": "python -m unittest discover"},
+                    exit_code=1,
+                )
+            ],
+        )
+
+        self.assertFalse(result.ok)
+        self.assertFalse(result.verified)
+        self.assertTrue(result.has_code_verification)
+        self.assertFalse(result.code_verification_passed)
+        self.assertEqual(result.code_verification_commands, ["python -m unittest discover"])
+        self.assertIn("code_verification_failed", result.plan_repair.reasons)
 
     def test_agent_records_plan_execution_and_verifier_events(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -218,6 +323,10 @@ class StructuredWorkflowTests(unittest.TestCase):
             self.assertFalse(verifier["ok"])
             self.assertFalse(verifier["verified"])
             self.assertEqual(verifier["verification_policy"], "required")
+            self.assertTrue(verifier["has_runtime_evidence"])
+            self.assertEqual(verifier["runtime_evidence_tools"], ["context_snapshot"])
+            self.assertFalse(verifier["has_code_verification"])
+            self.assertFalse(verifier["code_verification_passed"])
             self.assertEqual(verifier["evidence_ledger"][0]["tool"], "context_snapshot")
             executor = [event for event in events if event["event"] == "executor_tool_use"][0]["payload"]
             self.assertEqual(executor["name"], "context_snapshot")
@@ -228,7 +337,7 @@ class StructuredWorkflowTests(unittest.TestCase):
             planner = [event for event in events if event["event"] == "planner_plan"][0]["payload"]
             self.assertEqual(planner["verification_policy"], "required")
             evidence = [event for event in events if event["event"] == "evidence_ledger"][0]["payload"]
-            self.assertEqual(evidence["items"][0]["kind"], "tool")
+            self.assertEqual(evidence["items"][0]["kind"], "runtime_evidence")
             repair = [event for event in events if event["event"] == "plan_repair"][0]["payload"]
             self.assertTrue(repair["needed"])
             self.assertIn("missing_required_verification", repair["reasons"])

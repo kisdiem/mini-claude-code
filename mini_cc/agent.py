@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from typing import Any, Callable
 
-from .coding_loop import CodingLoopPolicy
+from .coding_loop import CodingLoopPolicy, parse_exit_code
 from .hooks import HookRuntime
 from .llm import Provider
 from .session import AgentSession, SessionStore
@@ -182,6 +182,8 @@ class Agent:
                                 is_error=result.is_error,
                                 chars=len(result.content),
                                 summary=self._clip(result.content, 240),
+                                tool_input=dict(tool_input),
+                                exit_code=parse_exit_code(result.content) if name == "run_shell" else None,
                             )
                         )
                         if self.session_store is not None and session is not None:
@@ -228,6 +230,7 @@ class Agent:
                 turn += 1
                 if not tool_results:
                     if self.coding_loop is not None:
+                        # CodingLoopPolicy is the source of truth for code task success verification.
                         decision = self.coding_loop.finish_decision()
                         if not decision.allow_finish:
                             self.output(f"\n[coding-loop] {decision.reason}\n")

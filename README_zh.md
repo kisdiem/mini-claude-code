@@ -167,6 +167,13 @@ python -m mini_cc.evals.task_success
 - `context_snapshot` 只能说明上下文，不是测试通过证据；
 - 每次运行会写出 `.mini_cc/task-success/last-run.json`，方便向甲方展示本次代码任务是否验证通过。
 
+重要区别：
+
+- Runtime Evidence（运行证据）：说明 Agent 看过什么、收集过什么，比如 `git_diff`、`git_status`、`context_snapshot`、`list_files`、`read_file`、`search_text`。
+- Code Verification（代码验证）：说明代码真的跑过测试、lint、类型检查或构建检查，并且命令成功退出。
+- 对代码修改任务来说，只有通过 `run_shell` 执行真实测试/检查命令并成功退出，才算代码验证通过。
+- `CodingLoopPolicy` 是代码任务成功验证的强判定来源；运行证据可以辅助报告，但不能替代测试通过。
+
 详细架构见：`docs/coding_reliability_loop.md`。
 
 ## 生产可用性
@@ -237,7 +244,7 @@ python -m unittest discover
 当前本地验证结果：
 
 ```text
-Ran 220 tests
+Ran 245 tests
 OK
 ```
 
