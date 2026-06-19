@@ -65,10 +65,15 @@ READ_COMMANDS = {
 }
 
 VERIFY_COMMANDS = {
+    ".\\gradlew test",
+    "./gradlew test",
+    "cargo check",
     "cargo test",
     "dotnet test",
     "gradle test",
     "go test",
+    "make check",
+    "make test",
     "mvn test",
     "mypy",
     "npm test",
@@ -78,6 +83,8 @@ VERIFY_COMMANDS = {
     "pnpm run lint",
     "pnpm run test",
     "pytest",
+    "py -m pytest",
+    "py -m unittest",
     "py -3 -m unittest",
     "py -3 -m pytest",
     "python -m mypy",

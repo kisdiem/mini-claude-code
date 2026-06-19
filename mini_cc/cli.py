@@ -171,14 +171,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--mock", action="store_true", help="Use deterministic mock provider.")
     parser.add_argument("--s20", action="store_true", help="Enable the comprehensive S20 toolset.")
     parser.add_argument("--max-turns", type=int, default=8, help="Maximum model/tool loop turns.")
-    parser.add_argument("--coding-loop", action="store_true", help="Enable Coding Reliability Loop for code modification tasks.")
-    parser.add_argument("--no-coding-loop", action="store_true", help="Disable Coding Reliability Loop, including the S20 default.")
-    parser.add_argument("--test-command", help="Explicit verification command for Coding Reliability Loop.")
+    parser.add_argument("--coding-loop", action="store_true", help="Enable Coding Task Success Loop for code modification tasks.")
+    parser.add_argument("--no-coding-loop", action="store_true", help="Disable Coding Task Success Loop, including the S20 default.")
+    parser.add_argument("--test-command", help="Explicit verification command for Coding Task Success Loop.")
     parser.add_argument("--max-repair-attempts", type=int, default=3, help="Maximum repair attempts after failed verification.")
     parser.add_argument(
         "--require-verification",
         action="store_true",
-        help="Force verification after any write-file task when Coding Reliability Loop is enabled.",
+        help="Force verification after any write-file task when Coding Task Success Loop is enabled.",
     )
     parser.add_argument(
         "--max-nested-subagent-depth",

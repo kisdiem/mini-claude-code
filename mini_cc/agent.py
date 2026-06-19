@@ -292,7 +292,10 @@ class Agent:
 
         status = "max_turns"
         if self.coding_loop is not None:
-            self.coding_loop.write_artifact(status="failed")
+            final_report = self.coding_loop.final_report(status="max_turns_reached")
+            if final_report:
+                self.output("\n" + final_report)
+            self.coding_loop.write_artifact(status="max_turns_reached")
         if self.session_store is not None and session is not None:
             if self.workflow is not None and plan is not None:
                 verification = self.workflow.verifier.verify(plan, executions)

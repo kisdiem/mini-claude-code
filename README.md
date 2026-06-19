@@ -1,9 +1,9 @@
 # Mini Claude Code
 
 This is a teaching implementation of a Claude-Code-like coding agent. The first
-version showed the minimal loop. The current `3.5.0` version adds evidence-gated
-runtime reporting, real tool-use traces, MCP/hook live validation, more reliable
-subagent/context behavior, and demo packaging for external review.
+version showed the minimal loop. The current `3.6.0` version adds a Coding Task
+Success Loop on top of the existing evidence-gated reports, tool-use traces,
+MCP/hook validation, subagent/context runtime, and demo packaging.
 
 中文说明: [README_zh.md](README_zh.md)
 
@@ -72,12 +72,12 @@ $env:PYTHONDONTWRITEBYTECODE='1'
 & $py -m unittest discover
 ```
 
-## Coding Reliability Loop
+## Coding Task Success Loop
 
-Coding Reliability Loop moves code tasks from "the agent can call tools" to
-"the agent must verify after editing." When enabled, the runtime tracks file
-edits, refuses to finish after code changes without a real test/check command,
-asks the model to repair failed verification, and writes a task-success artifact.
+Coding Task Success Loop moves code tasks from "the agent can call tools" to
+"the agent must verify after editing." The runtime tracks file edits, blocks a
+final answer until a real test/check command runs, asks the model to repair
+failed verification, reruns verification, and writes a task-success artifact.
 
 Run with S20:
 
@@ -88,7 +88,19 @@ py -3 -m mini_cc --s20 --coding-loop --permission auto --workspace . "fix the fa
 Harness-style run with an explicit test command:
 
 ```powershell
-py -3 -m mini_cc run --provider openai --model gpt-5 --s20 --coding-loop --test-command "python -m unittest discover" --permission-mode bypass --workspace . --output-format json --prompt "fix the bug"
+py -3 -m mini_cc run --s20 --coding-loop --test-command "python -m unittest discover" --permission-mode bypass --workspace . --output-format json --prompt "fix the bug"
+```
+
+Python pytest example:
+
+```powershell
+python -m mini_cc --s20 --coding-loop --test-command "python -m pytest" --workspace . "fix the failing tests"
+```
+
+Run the lightweight task-success smoke eval:
+
+```powershell
+python -m mini_cc.evals.task_success
 ```
 
 Key rules:
@@ -97,6 +109,8 @@ Key rules:
   replacement for larger code edits.
 - Only test/check commands run through `run_shell` count as verification.
 - `git_diff` is useful diff evidence, but it is not pass/fail evidence.
+- `git_status` is workspace evidence, but it is not pass/fail evidence.
+- `context_snapshot` is context evidence, but it is not pass/fail evidence.
 - The latest task outcome is written to `.mini_cc/task-success/last-run.json`.
 
 See [docs/coding_reliability_loop.md](docs/coding_reliability_loop.md) for the
@@ -1385,9 +1399,9 @@ In plain terms:
   step;
 - write, Docker, network, package-manager, and benchmark-like tasks require an
   explicit verification signal;
-- a verification signal means the agent actually ran a verify-classified tool
-  such as `context_snapshot`, `git_diff`, `git_status`, `run_shell`, or
-  `subagent_pipeline`;
+- a verification signal means the agent actually ran a real test/check command
+  through `run_shell`; `context_snapshot`, `git_diff`, `git_status`, and
+  `subagent_pipeline` are evidence/inspection tools, not pass evidence;
 - if a high-risk task makes changes but never reaches that verification step,
   the verifier marks the run as not OK instead of quietly treating it as good
   enough.

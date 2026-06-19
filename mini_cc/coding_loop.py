@@ -15,17 +15,24 @@ CODING_TASK_TOKENS = {
     "bug",
     "test",
     "failing",
+    "failure",
+    "error",
     "implement",
     "refactor",
     "add",
     "update",
+    "patch",
     "修改",
     "修复",
     "报错",
     "实现",
+    "增加",
+    "添加",
+    "更新",
     "重构",
     "测试",
     "代码",
+    "补丁",
 }
 
 WRITE_TOOLS = {"write_file", "replace_text", "apply_patch"}
@@ -36,16 +43,25 @@ NON_VERIFICATION_TOOLS = {
     "read_file",
     "search_text",
     "context_snapshot",
+    "memory_read",
+    "memory_write",
+    "todo_read",
+    "todo_write",
+    "subagent_pipeline",
 }
 
 VERIFICATION_PREFIXES = {
+    "make check",
+    "make test",
     "pytest",
     "python -m pytest",
     "python3 -m pytest",
+    "py -m pytest",
     "py -3 -m pytest",
     "unittest",
     "python -m unittest",
     "python3 -m unittest",
+    "py -m unittest",
     "py -3 -m unittest",
     "npm test",
     "npm run test",
@@ -61,6 +77,7 @@ VERIFICATION_PREFIXES = {
     "mypy",
     "tsc",
     "npx tsc",
+    "cargo check",
     "cargo test",
     "go test",
     "mvn test",
@@ -89,35 +106,44 @@ class VerificationCommand:
 
 
 @dataclass
-class CodingReliabilityState:
+class CodingTaskState:
+    enabled: bool = True
     code_modified: bool = False
     modified_files: list[str] = field(default_factory=list)
     verification_commands: list[VerificationCommand] = field(default_factory=list)
     last_verification_passed: bool = False
     last_verification_failed: bool = False
+    last_failed_command: str | None = None
     last_failure_summary: str = ""
     repair_attempts: int = 0
     max_repair_attempts: int = 3
     required: bool = False
     test_command: str | None = None
     discovered_test_command: str | None = None
+    final_status: str = "not_required"
     dirty_since_verification: bool = False
 
     def to_json(self) -> dict[str, Any]:
         return {
+            "enabled": self.enabled,
             "code_modified": self.code_modified,
             "modified_files": list(self.modified_files),
             "verification_commands": [command.to_json() for command in self.verification_commands],
             "last_verification_passed": self.last_verification_passed,
             "last_verification_failed": self.last_verification_failed,
+            "last_failed_command": self.last_failed_command,
             "last_failure_summary": self.last_failure_summary,
             "repair_attempts": self.repair_attempts,
             "max_repair_attempts": self.max_repair_attempts,
             "required": self.required,
             "test_command": self.test_command,
             "discovered_test_command": self.discovered_test_command,
+            "final_status": self.final_status,
             "dirty_since_verification": self.dirty_since_verification,
         }
+
+
+CodingReliabilityState = CodingTaskState
 
 
 @dataclass(frozen=True)
@@ -143,11 +169,12 @@ class CodingLoopPolicy:
         self.explicit_test_command = test_command.strip() if test_command else None
         self.max_repair_attempts = max(0, int(max_repair_attempts))
         self.require_verification = require_verification
-        self.state = CodingReliabilityState(max_repair_attempts=self.max_repair_attempts)
+        self.state = CodingTaskState(enabled=enabled, max_repair_attempts=self.max_repair_attempts)
 
     def start(self, prompt: str) -> None:
         discovered = discover_test_command(self.workspace)
-        self.state = CodingReliabilityState(
+        self.state = CodingTaskState(
+            enabled=self.enabled,
             max_repair_attempts=self.max_repair_attempts,
             required=self.require_verification or is_likely_code_task(prompt),
             test_command=self.explicit_test_command or discovered,
@@ -158,8 +185,6 @@ class CodingLoopPolicy:
         if not self.enabled:
             return
         if name in WRITE_TOOLS and not result.is_error:
-            if self.state.last_verification_failed and not self.state.dirty_since_verification:
-                self.state.repair_attempts += 1
             self.state.required = True
             self.state.code_modified = True
             self.state.dirty_since_verification = True
@@ -171,37 +196,43 @@ class CodingLoopPolicy:
             self.state.dirty_since_verification = False
             self.state.last_verification_passed = verification.passed
             self.state.last_verification_failed = not verification.passed
+            self.state.last_failed_command = None if verification.passed else verification.command
             self.state.last_failure_summary = "" if verification.passed else summarize_failure(verification)
 
     def finish_decision(self) -> CodingLoopDecision:
         if not self.enabled:
-            return CodingLoopDecision(True, status="not_required")
+            return self._decision(True, status="not_required")
         if not self.state.code_modified:
-            return CodingLoopDecision(True, status="not_required")
+            return self._decision(True, status="not_required")
         if not self.state.verification_commands:
-            return CodingLoopDecision(
+            return self._decision(
                 False,
                 instruction=self.verification_required_instruction(),
                 reason="code modified without verification",
                 status="failed",
             )
         if self.state.dirty_since_verification:
-            return CodingLoopDecision(
+            return self._decision(
                 False,
                 instruction=self.verification_required_instruction(),
                 reason="code modified after last verification",
                 status="failed",
             )
         if self.state.last_verification_failed and self.state.repair_attempts < self.state.max_repair_attempts:
-            return CodingLoopDecision(
+            self.state.repair_attempts += 1
+            return self._decision(
                 False,
                 instruction=self.repair_required_instruction(),
                 reason="last verification command failed",
                 status="failed",
             )
         if self.state.last_verification_failed:
-            return CodingLoopDecision(True, reason="repair limit reached", status="max_attempts_reached")
-        return CodingLoopDecision(True, status="passed")
+            return self._decision(True, reason="repair limit reached", status="max_attempts_reached")
+        return self._decision(True, status="passed")
+
+    def _decision(self, allow_finish: bool, instruction: str = "", reason: str = "", status: str = "not_required") -> CodingLoopDecision:
+        self.state.final_status = status
+        return CodingLoopDecision(allow_finish, instruction=instruction, reason=reason, status=status)
 
     def verification_required_instruction(self) -> str:
         command_hint = (
@@ -211,15 +242,15 @@ class CodingLoopPolicy:
         )
         return (
             "Verification required before final answer. You modified code but have not run a real verification command. "
-            "Run the project test command if available. Do not use git_status, git_diff, list_files, read_file, "
-            "search_text, or context_snapshot as verification."
+            "Run the project test command if available. "
+            "git_status, git_diff, context_snapshot, list_files, read_file, and search_text do not count as verification."
             + command_hint
         )
 
     def repair_required_instruction(self) -> str:
         return (
             "The last verification command failed. Read the failure output, identify the cause, make one minimal repair, "
-            "then run verification again.\n\nLast failure summary:\n"
+            "then run verification again. Do not make unrelated changes.\n\nLast failure summary:\n"
             + (self.state.last_failure_summary or "[no failure summary]")
         )
 
@@ -242,13 +273,13 @@ class CodingLoopPolicy:
         return "\n".join(
             [
                 "Summary:",
-                "- changed files: " + (", ".join(self.state.modified_files) if self.state.modified_files else "[unknown]"),
-                "- main changes: code changes were applied during this run",
+                "- Changed files: " + (", ".join(self.state.modified_files) if self.state.modified_files else "[unknown]"),
+                "- Main changes: code changes were applied during this run",
                 "",
                 "Verification:",
-                f"- command: {command}",
-                f"- result: {result}",
-                f"- exit code: {exit_code}",
+                f"- Command: {command}",
+                f"- Result: {result}",
+                f"- Exit code: {exit_code}",
                 "",
                 "Remaining issues:",
                 f"- {unresolved}",
@@ -298,7 +329,7 @@ def is_verification_command(command: str) -> bool:
     normalized = normalize_command(command)
     if not normalized:
         return False
-    return any(normalized == prefix or normalized.startswith(prefix + " ") for prefix in VERIFICATION_PREFIXES)
+    return any(normalized == prefix or normalized.startswith(prefix + " ") or f" {prefix} " in f" {normalized} " for prefix in VERIFICATION_PREFIXES)
 
 
 def parse_verification_result(command: str, result: ToolResult) -> VerificationCommand:
@@ -368,6 +399,10 @@ def discover_test_command(workspace: Path, explicit: str | None = None) -> str |
         return "cargo test"
     if (root / "go.mod").exists():
         return "go test ./..."
+    if (root / "pom.xml").exists():
+        return "mvn test"
+    if (root / "gradlew").exists() or (root / "gradlew.bat").exists() or (root / "build.gradle").exists():
+        return "./gradlew test"
     if (root / "pytest.ini").exists():
         return "python -m pytest"
     pyproject = root / "pyproject.toml"

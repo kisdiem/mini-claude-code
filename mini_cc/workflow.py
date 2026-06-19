@@ -295,8 +295,22 @@ def extract_response_text(response: Any) -> str:
 class Executor:
     """Classify tool executions against the current plan."""
 
-    VERIFY_TOOLS = {"run_shell", "git_status", "git_diff", "context_snapshot", "subagent_pipeline"}
-    INSPECT_TOOLS = {"list_files", "read_file", "search_text", "todo_read", "memory_read", "skill_list", "skill_read"}
+    VERIFY_TOOLS = {"run_shell"}
+    INSPECT_TOOLS = {
+        "list_files",
+        "read_file",
+        "search_text",
+        "todo_read",
+        "todo_write",
+        "memory_read",
+        "memory_write",
+        "skill_list",
+        "skill_read",
+        "git_status",
+        "git_diff",
+        "context_snapshot",
+        "subagent_pipeline",
+    }
 
     def classify_tool(self, name: str) -> str:
         if name in self.INSPECT_TOOLS:
@@ -395,7 +409,7 @@ class Verifier:
             suggested_actions.append("Inspect the failed tool result, fix the cause, and rerun the missing step.")
         if verification_required and "verify" not in observed_steps:
             reasons.append("missing_required_verification")
-            suggested_actions.append("Run a verify-classified tool before treating the task as complete.")
+            suggested_actions.append("Run a real verification command through run_shell before treating the task as complete.")
         for step_id in missing_steps:
             if step_id == "inspect":
                 suggested_actions.append("Inspect workspace context before continuing with more edits.")

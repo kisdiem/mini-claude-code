@@ -171,6 +171,22 @@ class StructuredWorkflowTests(unittest.TestCase):
         self.assertTrue(result.plan_repair.needed)
         self.assertIn("tool_failure", result.plan_repair.reasons)
 
+    def test_git_and_context_tools_are_not_verification(self) -> None:
+        plan = Planner().plan("edit a file")
+        result = Verifier().verify(
+            plan,
+            [
+                ExecutionRecord(turn=1, tool="git_status", planned_step="inspect", is_error=False, chars=10),
+                ExecutionRecord(turn=2, tool="git_diff", planned_step="inspect", is_error=False, chars=10),
+                ExecutionRecord(turn=3, tool="context_snapshot", planned_step="inspect", is_error=False, chars=10),
+            ],
+        )
+
+        self.assertFalse(result.ok)
+        self.assertFalse(result.verified)
+        self.assertEqual(result.verification_tools, [])
+        self.assertEqual([item.kind for item in result.evidence_ledger], ["tool", "tool", "tool"])
+
     def test_agent_records_plan_execution_and_verifier_events(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -199,22 +215,23 @@ class StructuredWorkflowTests(unittest.TestCase):
             self.assertIn("evidence_ledger", names)
             self.assertIn("plan_repair", names)
             verifier = [event for event in events if event["event"] == "verifier_result"][0]["payload"]
-            self.assertTrue(verifier["ok"])
-            self.assertTrue(verifier["verified"])
+            self.assertFalse(verifier["ok"])
+            self.assertFalse(verifier["verified"])
             self.assertEqual(verifier["verification_policy"], "required")
             self.assertEqual(verifier["evidence_ledger"][0]["tool"], "context_snapshot")
             executor = [event for event in events if event["event"] == "executor_tool_use"][0]["payload"]
             self.assertEqual(executor["name"], "context_snapshot")
-            self.assertEqual(executor["planned_step"], "verify")
+            self.assertEqual(executor["planned_step"], "inspect")
             envelope = [event for event in events if event["event"] == "permission_envelope"][0]["payload"]
             self.assertEqual(envelope["mode"], "standard")
             self.assertIn("workspace_write", envelope["allowed_risks"])
             planner = [event for event in events if event["event"] == "planner_plan"][0]["payload"]
             self.assertEqual(planner["verification_policy"], "required")
             evidence = [event for event in events if event["event"] == "evidence_ledger"][0]["payload"]
-            self.assertEqual(evidence["items"][0]["kind"], "verification")
+            self.assertEqual(evidence["items"][0]["kind"], "tool")
             repair = [event for event in events if event["event"] == "plan_repair"][0]["payload"]
-            self.assertFalse(repair["needed"])
+            self.assertTrue(repair["needed"])
+            self.assertIn("missing_required_verification", repair["reasons"])
 
     def test_plan_scoped_permission_envelope_blocks_unplanned_docker(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

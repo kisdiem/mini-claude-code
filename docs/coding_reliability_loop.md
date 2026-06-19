@@ -1,6 +1,6 @@
-# Coding Reliability Loop
+# Coding Task Success Loop
 
-Coding Reliability Loop v1 is the runtime guard for code modification tasks.
+Coding Task Success Loop v3.6 is the runtime guard for code modification tasks.
 It is intentionally small: it does not replace MCP, hooks, subagents, memory, or
 the existing S20 workflow. It adds one missing production behavior: after code is
 changed, the agent must run a real verification command before it can finish.
@@ -48,8 +48,9 @@ run_shell test
 ## Runtime Rules
 
 - `write_file`, `replace_text`, and `apply_patch` mark the run as code-modified.
-- `git_status`, `git_diff`, `context_snapshot`, `list_files`, `read_file`, and
-  `search_text` are not verification.
+- `git_status`, `git_diff`, `context_snapshot`, `list_files`, `read_file`,
+  `search_text`, `memory_read`, `memory_write`, `todo_read`, `todo_write`, and
+  `subagent_pipeline` are not verification.
 - `run_shell` counts as verification only when the command looks like a real
   test or check command, such as `python -m unittest discover`, `pytest`,
   `npm test`, `npm run lint`, `ruff`, `mypy`, `tsc`, `cargo test`, or
@@ -72,13 +73,15 @@ py -3 -m mini_cc --s20 --coding-loop --test-command "python -m unittest discover
 
 Without `--test-command`, the runtime tries a simple local discovery:
 
-- `package.json` with `scripts.test` → `npm test`;
-- `package.json` with `scripts.lint` → `npm run lint`;
-- `Cargo.toml` → `cargo test`;
-- `go.mod` → `go test ./...`;
-- `pytest.ini` or pytest config → `python -m pytest`;
-- unittest-style `tests/` → `python -m unittest discover`;
-- other `tests/` → `python -m pytest`.
+- `package.json` with `scripts.test` -> `npm test`;
+- `package.json` with `scripts.lint` -> `npm run lint`;
+- `Cargo.toml` -> `cargo test`;
+- `go.mod` -> `go test ./...`;
+- `pom.xml` -> `mvn test`;
+- `gradlew`, `gradlew.bat`, or `build.gradle` -> `./gradlew test`;
+- `pytest.ini` or pytest config -> `python -m pytest`;
+- unittest-style `tests/` -> `python -m unittest discover`;
+- other `tests/` -> `python -m pytest`.
 
 If nothing is detected, the agent is told to inspect the project and choose the
 most local deterministic test or lint command.
@@ -121,3 +124,22 @@ The artifact records:
 
 This file is meant for demos and CI-like checks. It gives a reviewer a concrete
 artifact instead of asking them to trust a final chat message.
+
+## Task-Success Smoke Eval
+
+Run:
+
+```powershell
+python -m mini_cc.evals.task_success
+```
+
+The eval creates a few tiny broken Python projects, applies deterministic
+patches with `apply_patch`, runs `python -m unittest discover`, and writes:
+
+```text
+.mini_cc/task-success-eval/task-success-eval.json
+```
+
+This is not a SWE-bench or Terminal-Bench score. It is a small smoke test that
+checks whether the local task-success loop can produce changed files,
+verification commands, and passed task artifacts.

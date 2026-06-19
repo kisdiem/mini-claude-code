@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from mini_cc.agent import Agent
-from mini_cc.coding_loop import CodingLoopPolicy, is_verification_command
+from mini_cc.coding_loop import CodingLoopPolicy, discover_test_command, is_verification_command
 from mini_cc.llm import MockBlock, MockResponse
 from mini_cc.tools import ToolResult, ToolRunner
 
@@ -83,7 +83,11 @@ class CodingLoopTests(unittest.TestCase):
 
     def test_run_shell_test_command_is_verification(self) -> None:
         self.assertTrue(is_verification_command("python -m unittest discover"))
+        self.assertTrue(is_verification_command("pytest"))
+        self.assertTrue(is_verification_command("py -m pytest"))
         self.assertTrue(is_verification_command("npm run lint"))
+        self.assertTrue(is_verification_command("cargo check"))
+        self.assertTrue(is_verification_command("make test"))
         self.assertTrue(is_verification_command("go test ./..."))
 
     def test_non_verification_tools_do_not_count(self) -> None:
@@ -93,9 +97,19 @@ class CodingLoopTests(unittest.TestCase):
 
             policy.observe_tool_result("git_diff", {}, ToolResult("diff"))
             policy.observe_tool_result("git_status", {}, ToolResult("clean"))
+            policy.observe_tool_result("context_snapshot", {}, ToolResult("snapshot"))
             policy.observe_tool_result("run_shell", {"command": "git diff"}, ToolResult("exit_code=0\nstdout:\n\nstderr:\n"))
 
             self.assertEqual(policy.state.verification_commands, [])
+
+    def test_discover_test_command_prefers_unittest_when_tests_are_unittest_style(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tests = root / "tests"
+            tests.mkdir()
+            Path(tests, "test_sample.py").write_text("import unittest\n", encoding="utf-8")
+
+            self.assertEqual(discover_test_command(root), "python -m unittest discover")
 
     def test_modified_code_without_verification_blocks_finish(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -197,9 +211,27 @@ class CodingLoopTests(unittest.TestCase):
             self.assertIn("Verification:", joined)
             artifact = json.loads((root / ".mini_cc" / "task-success" / "last-run.json").read_text(encoding="utf-8"))
             self.assertTrue(artifact["coding_loop_enabled"])
+            self.assertTrue(artifact["enabled"])
             self.assertTrue(artifact["code_modified"])
             self.assertEqual(artifact["status"], "passed")
+            self.assertEqual(artifact["final_status"], "passed")
             self.assertEqual(artifact["verification_commands"][0]["command"], "python -m unittest discover")
+
+    def test_agent_max_turns_writes_max_turns_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent = Agent(
+                WriteThenFinalProvider(),  # type: ignore[arg-type]
+                ToolRunner(root, permission="auto"),
+                max_turns=2,
+                output=lambda _text: None,
+                coding_loop=CodingLoopPolicy(root, enabled=True),
+            )
+
+            agent.run("fix bug")
+
+            artifact = json.loads((root / ".mini_cc" / "task-success" / "last-run.json").read_text(encoding="utf-8"))
+            self.assertEqual(artifact["status"], "max_turns_reached")
 
 
 if __name__ == "__main__":

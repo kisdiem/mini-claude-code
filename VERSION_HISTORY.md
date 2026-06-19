@@ -3,6 +3,53 @@
 This file records architecture iterations, benchmark status, and known
 validation limits for the teaching agent.
 
+## 3.6 - Coding Task Success Loop
+
+Date: 2026-06-20
+
+Status: implemented and locally tested.
+
+What changed:
+
+- upgraded package version to `3.6.0`;
+- added `apply_patch`, a workspace-safe unified diff editing tool with:
+  - `dry_run` validation;
+  - path escape protection;
+  - multi-file patch support;
+  - existing permission and `FileChanged` hook integration;
+- added `mini_cc.coding_loop.CodingLoopPolicy` and `CodingTaskState`;
+- added runtime gating before final answers:
+  - code edits without a real verification command cannot finish;
+  - failed verification forces a minimal repair prompt until the repair limit;
+  - passed verification allows final report;
+  - max turns writes `max_turns_reached`;
+- narrowed code usability verification:
+  - `git_status`, `git_diff`, `context_snapshot`, and similar tools are evidence only;
+  - only real test/check commands through `run_shell` count as verification;
+- added `.mini_cc/task-success/last-run.json` as an independent task success artifact;
+- added lightweight task-success eval scaffold:
+  - `python -m mini_cc.evals.task_success`;
+  - writes `task-success-eval.json`;
+  - covers small deterministic Python repair cases.
+
+Test status:
+
+- targeted coding loop, workflow, and task-success eval tests passed locally;
+- full `python -m unittest discover` passed locally:
+  - 238 tests;
+  - `OK`;
+- `python -m mini_cc.evals.task_success --output-dir .mini_cc\task_success_eval_smoke` passed:
+  - 3 total cases;
+  - 3 passed cases;
+  - pass rate `1.0`.
+
+Important interpretation:
+
+- this is not a SWE-bench or Terminal-Bench autonomous score;
+- the eval is a smoke test for the local task-success loop;
+- it improves coding reliability by forcing verification, but does not make the
+  project product-level Claude Code parity.
+
 ## 3.5 - External Benchmark and Demo Packaging
 
 Date: 2026-06-19
@@ -1841,8 +1888,7 @@ OK
 
 Test environment note:
 
-- tests were run with Python 3.10 at
-  `C:\Users\sixth\AppData\Local\Programs\Python\Python310\python.exe`;
+- tests were run with a local Python 3.10 interpreter;
 - `py -3` currently points to Python 3.14 on this machine, where temporary
   directory permissions caused unrelated `tempfile` failures.
 
