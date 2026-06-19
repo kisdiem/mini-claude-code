@@ -119,6 +119,18 @@ class TaskStateMachineTests(unittest.TestCase):
             self.assertTrue(decision.allow)
             self.assertEqual(machine.state.task_type, "question")
 
+    def test_desktop_prompt_wrapper_uses_original_user_request_for_classification(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            machine = TaskStateMachine(Path(tmp))
+            machine.start(
+                "你正在 Mini Claude Code 桌面软件里运行。如果用户要求创建、修改、打开文件、运行程序，"
+                "你必须优先使用可用工具实际执行。\n\n用户原始请求：\n你好"
+            )
+
+            self.assertFalse(machine.state.is_code_task)
+            self.assertEqual(machine.state.task_type, "question")
+            self.assertTrue(machine.finish_decision().allow)
+
 
 if __name__ == "__main__":
     unittest.main()

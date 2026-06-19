@@ -118,14 +118,15 @@ class TaskStateMachine:
         self.state = TaskState(max_repair_attempts=self.max_repair_attempts)
 
     def start(self, prompt: str) -> None:
-        task_type = self._task_type(prompt)
-        is_code_task = is_likely_code_task(prompt) or task_type == "code_modification" or "代码" in prompt or "测试" in prompt
+        task_prompt = self._extract_user_task(prompt)
+        task_type = self._task_type(task_prompt)
+        is_code_task = is_likely_code_task(task_prompt) or task_type == "code_modification" or "代码" in task_prompt or "测试" in task_prompt
         self.state = TaskState(
             phase=TaskPhase.INTAKE,
             task_type=task_type,
             is_code_task=is_code_task,
             max_repair_attempts=self.max_repair_attempts,
-            allow_new_files=self._allows_new_files(prompt),
+            allow_new_files=self._allows_new_files(task_prompt),
         )
         self._set_phase(TaskPhase.EXPLORE if self._requires_staged_loop() else TaskPhase.FINAL, "start")
 
@@ -314,6 +315,18 @@ class TaskStateMachine:
         if any(token in lowered for token in self.MODIFICATION_TOKENS):
             return "code_modification"
         return "question"
+
+    def _extract_user_task(self, prompt: str) -> str:
+        markers = [
+            "用户原始请求：",
+            "用户原始请求:",
+            "User original request:",
+            "Original user request:",
+        ]
+        for marker in markers:
+            if marker in prompt:
+                return prompt.split(marker, 1)[1].strip()
+        return prompt
 
     def _allows_new_files(self, prompt: str) -> bool:
         lowered = prompt.lower()

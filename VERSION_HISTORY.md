@@ -24,6 +24,8 @@ What changed:
   - `FINAL`;
 - integrated the state machine into `Agent.run` as a process gate before tool
   execution and before final answers;
+- enabled the state machine for CLI/desktop agent construction independently
+  from `CodingLoopPolicy`;
 - kept `CodingLoopPolicy` as the final code task success gate;
 - blocked unsafe coding-process shortcuts:
   - editing before exploration;
@@ -39,7 +41,7 @@ Test status:
 - targeted task-state, agent, CLI, workflow, S20, and coding-loop tests passed
   locally;
 - full `python -m unittest discover` passed locally:
-  - 255 tests;
+  - 257 tests;
   - `OK`.
 
 Important interpretation:

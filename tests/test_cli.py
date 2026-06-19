@@ -4,7 +4,7 @@ import unittest
 import tempfile
 from pathlib import Path
 
-from mini_cc.cli import extract_benchmark_hints, parse_args, permission_mode, prompt_text, system_prompt_for_workspace
+from mini_cc.cli import build_agent, extract_benchmark_hints, parse_args, permission_mode, prompt_text, system_prompt_for_workspace
 
 
 class CliHarnessArgsTests(unittest.TestCase):
@@ -35,6 +35,15 @@ class CliHarnessArgsTests(unittest.TestCase):
         self.assertEqual(args.provider, "openai")
         self.assertEqual(args.model, "gpt-5")
         self.assertEqual(prompt_text(args), "list files")
+
+    def test_build_agent_enables_task_state_machine_without_coding_loop_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            args = parse_args(["run", "--mock", "--workspace", tmp, "--prompt", "list files"])
+
+            agent = build_agent(args, output=lambda _text: None)
+
+            self.assertIsNotNone(agent.task_state_machine)
+            self.assertIsNone(agent.coding_loop)
 
     def test_diagnose_config_arg(self) -> None:
         args = parse_args(["--diagnose-config", "--workspace", "."])

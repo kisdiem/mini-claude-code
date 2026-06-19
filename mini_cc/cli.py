@@ -526,14 +526,10 @@ def build_agent(args: argparse.Namespace, output: Callable[[str], None] = print)
         if coding_loop_enabled
         else None
     )
-    task_state_machine = (
-        TaskStateMachine(
-            config.workspace,
-            max_repair_attempts=args.max_repair_attempts,
-            enabled=True,
-        )
-        if coding_loop_enabled
-        else None
+    task_state_machine = TaskStateMachine(
+        config.workspace,
+        max_repair_attempts=args.max_repair_attempts,
+        enabled=True,
     )
     system_prompt = system_prompt_for_workspace(
         S20_SYSTEM_PROMPT if args.s20 else SYSTEM_PROMPT,
