@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mini-claude-code"
+version = "3.5.0"
+description = "A teaching-oriented Claude Code style AI Agent runtime with tools, hooks, MCP, subagents, permissions, and desktop UI."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "Mini Claude Code Contributors" }
+]
+keywords = ["agent", "claude-code", "mcp", "hooks", "subagents", "desktop"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence"
+]
+dependencies = [
+  "anthropic>=0.60.0",
+  "openai>=2.0.0",
+  "websocket-client>=1.8.0",
+  "tkinterdnd2>=0.4.3"
+]
+
+[project.optional-dependencies]
+dev = []
+
+[project.scripts]
+mini-cc = "mini_cc.cli:main"
+mini-cc-desktop = "mini_cc.desktop_launcher:main"
+
+[tool.setuptools.packages.find]
+include = ["mini_cc*"]
+
+[tool.setuptools.package-data]
+mini_cc = ["assets/*.png", "assets/*.ico"]

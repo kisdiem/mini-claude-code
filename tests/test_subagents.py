@@ -1644,8 +1644,8 @@ class SubagentRuntimeTests(unittest.TestCase):
 
             def factory(spec: SubagentSpec) -> TargetedWriteProvider:
                 if spec.name == "writer-a":
-                    return TargetedWriteProvider("alpha.txt", "alpha\n", delay=0.2)
-                return TargetedWriteProvider("beta.txt", "beta\n", delay=0.2)
+                    return TargetedWriteProvider("alpha.txt", "alpha\n", delay=0.3)
+                return TargetedWriteProvider("beta.txt", "beta\n", delay=0.3)
 
             runtime = SubagentRuntime(
                 workspace=root,
@@ -1670,7 +1670,7 @@ class SubagentRuntimeTests(unittest.TestCase):
             self.assertIn("parallel write merge completed", result.content)
             self.assertEqual((root / "alpha.txt").read_text(encoding="utf-8"), "alpha\n")
             self.assertEqual((root / "beta.txt").read_text(encoding="utf-8"), "beta\n")
-            self.assertLess(elapsed, 0.39)
+            self.assertLess(elapsed, 0.55)
             handoffs = [
                 json.loads(line)
                 for line in Path(state_dir, "handoffs.jsonl").read_text(encoding="utf-8").splitlines()

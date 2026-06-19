@@ -16,6 +16,20 @@ Reference:
 
 ## Quick Start
 
+Install for local development:
+
+```powershell
+cd mini-claude-code
+py -3 -m pip install --upgrade pip setuptools wheel
+py -3 -m pip install -e .
+```
+
+For a lightweight demo-only setup, installing `requirements.txt` is also enough:
+
+```powershell
+py -3 -m pip install -r requirements.txt
+```
+
 Run with no API key:
 
 ```powershell
@@ -58,9 +72,9 @@ $env:PYTHONDONTWRITEBYTECODE='1'
 & $py -m unittest discover
 ```
 
-## Client Demo Package
+## Demo Package
 
-For a reviewer or client, start with:
+Start with:
 
 ```powershell
 .\scripts\mock_demo.ps1
@@ -77,6 +91,31 @@ Optional local MCP/hook smoke:
 
 The Chinese review guide is [CLIENT_README_zh.md](CLIENT_README_zh.md). Example
 configs live under `examples/`.
+
+## Production Readiness
+
+This repository includes the basic engineering pieces expected from a reviewable
+MVP:
+
+- `pyproject.toml` for editable installation and console entrypoints.
+- GitHub Actions CI for Python 3.10, 3.11, and 3.12.
+- Windows health check script: `scripts\health_check.ps1`.
+- Native one-click launcher: `scripts\start_desktop.bat`.
+- Local secrets and runtime state ignored through `.gitignore`.
+
+Run a local health check:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\health_check.ps1
+```
+
+Run the full health check including unit tests:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\health_check.ps1 -Full
+```
+
+Chinese production-readiness notes: [docs/production-readiness-zh.md](docs/production-readiness-zh.md).
 
 ## Local Frontend
 

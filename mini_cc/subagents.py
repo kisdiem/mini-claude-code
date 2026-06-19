@@ -1565,8 +1565,15 @@ class SubagentRuntime:
 
     def is_git_repository(self, workspace: Path) -> bool:
         try:
-            completed = subprocess.run(
+            inside = subprocess.run(
                 ["git", "-C", str(workspace), "rev-parse", "--is-inside-work-tree"],
+                capture_output=True,
+                text=True,
+                shell=False,
+                timeout=5,
+            )
+            top_level = subprocess.run(
+                ["git", "-C", str(workspace), "rev-parse", "--show-toplevel"],
                 capture_output=True,
                 text=True,
                 shell=False,
@@ -1574,7 +1581,14 @@ class SubagentRuntime:
             )
         except (FileNotFoundError, subprocess.TimeoutExpired):
             return False
-        return completed.returncode == 0 and completed.stdout.strip() == "true"
+        if inside.returncode != 0 or inside.stdout.strip() != "true":
+            return False
+        if top_level.returncode != 0:
+            return False
+        try:
+            return Path(top_level.stdout.strip()).resolve() == workspace.resolve()
+        except OSError:
+            return False
 
     def tool_runner_for_workspace(self, workspace: Path) -> ToolRunner:
         clone = getattr(self.base_tools, "clone_for_workspace", None)

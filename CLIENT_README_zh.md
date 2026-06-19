@@ -1,4 +1,4 @@
-# Mini Claude Code 甲方检查说明
+# Mini Claude Code 项目检查说明
 
 当前版本：`3.5.0`
 
