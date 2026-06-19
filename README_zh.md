@@ -195,6 +195,21 @@ INTAKE -> EXPLORE -> LOCALIZE -> PLAN -> EDIT -> VERIFY -> REPAIR -> FINAL
 
 简单说：`TaskStateMachine` 管“过程有没有按正确阶段走”，`CodingLoopPolicy` 管“最后有没有真实验证通过”。
 
+## Semantic Task Success 语义证据检查
+
+`mini_cc.task_success` 在阶段状态机之上增加了一层确定性的语义检查，不依赖额外 LLM。它会从用户 prompt 中提取 `TaskContract`，包括任务类型、显式路径、符号名、约束和验收关键词，然后检查 plan、edit、verification 是否真的和任务有关。
+
+它会拦截一些“形式合规但证据无意义”的情况：
+
+- 用户要求只改 `a.py`，但计划或编辑了 `b.py`；
+- 用户说不要改测试，但编辑了 `tests/` 文件；
+- bug fix 任务只改 README；
+- 文档任务只改代码文件；
+- 修改 Python 文件后只运行 `echo ok`、`git diff` 或无关命令；
+- `pytest` 返回 0，但输出显示 `collected 0 items` 或 `no tests ran`。
+
+`.mini_cc/task-success/last-run.json` 会记录 `task_contract`、`process_checks`、`semantic_checks`、`semantic_warnings` 和 `semantic_blockers`。也就是说：`TaskStateMachine` 管流程，`task_success` 管证据是否相关，`CodingLoopPolicy` 管代码修改后是否真的通过验证。
+
 ## 生产可用性
 
 本项目已经补充了面向交付的基础工程能力：
@@ -263,7 +278,7 @@ python -m unittest discover
 当前本地验证结果：
 
 ```text
-Ran 257 tests
+Ran 270 tests
 OK
 ```
 

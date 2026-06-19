@@ -299,6 +299,8 @@ class Agent:
                         if final_report:
                             self.output("\n" + final_report)
                         self.coding_loop.write_artifact(status=decision.status)
+                    if self.task_state_machine is not None:
+                        self.task_state_machine.write_artifact(status=status)
                     if self.workflow is not None and plan is not None and self.session_store is not None and session is not None:
                         verification = self.workflow.verifier.verify(plan, executions)
                         self.session_store.record(session, "verifier_result", verification.to_json())
@@ -328,6 +330,8 @@ class Agent:
             status = "failed"
             if self.coding_loop is not None:
                 self.coding_loop.write_artifact(status="failed")
+            if self.task_state_machine is not None:
+                self.task_state_machine.write_artifact(status="failed")
             if self.session_store is not None and session is not None:
                 self.session_store.record(session, "error", {"message": str(exc)})
                 self.session_store.finish(session, status=status)
@@ -347,6 +351,8 @@ class Agent:
             if final_report:
                 self.output("\n" + final_report)
             self.coding_loop.write_artifact(status="max_turns_reached")
+        if self.task_state_machine is not None:
+            self.task_state_machine.write_artifact(status="max_turns_reached")
         if self.session_store is not None and session is not None:
             if self.workflow is not None and plan is not None:
                 verification = self.workflow.verifier.verify(plan, executions)

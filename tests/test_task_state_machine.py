@@ -69,7 +69,7 @@ class TaskStateMachineTests(unittest.TestCase):
             machine = TaskStateMachine(root)
             machine.start("fix bug in app.py")
             machine.observe_tool_result("read_file", {"path": "app.py"}, ToolResult("1: value = 1"))
-            machine.observe_assistant_text("Plan: planned_files: app.py. Change value.")
+            machine.observe_assistant_text("Plan: planned_files: app.py. Change value and verify with python -m unittest discover.")
             machine.observe_tool_result("replace_text", {"path": "app.py"}, ToolResult("Replaced 1 occurrence(s) in app.py"))
 
             decision = machine.finish_decision()
@@ -85,7 +85,7 @@ class TaskStateMachineTests(unittest.TestCase):
             machine = TaskStateMachine(root, max_repair_attempts=1)
             machine.start("fix bug in app.py")
             machine.observe_tool_result("read_file", {"path": "app.py"}, ToolResult("1: value = 1"))
-            machine.observe_assistant_text("Plan: planned_files: app.py. Change value.")
+            machine.observe_assistant_text("Plan: planned_files: app.py. Change value and verify with python -m unittest discover.")
             machine.observe_tool_result("replace_text", {"path": "app.py"}, ToolResult("Replaced 1 occurrence(s) in app.py"))
             machine.observe_tool_result(
                 "run_shell",

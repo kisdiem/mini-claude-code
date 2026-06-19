@@ -1,9 +1,9 @@
 # Mini Claude Code
 
 This is a teaching implementation of a Claude-Code-like coding agent. The first
-version showed the minimal loop. The current `3.7.0` version adds a staged
-coding task state machine on top of the Coding Task Success Loop,
-evidence-gated reports, tool-use traces,
+version showed the minimal loop. The current `3.7.1` version adds a staged
+coding task state machine and semantic task-success checks on top of the Coding
+Task Success Loop, evidence-gated reports, tool-use traces,
 MCP/hook validation, subagent/context runtime, and demo packaging.
 
 中文说明: [README_zh.md](README_zh.md)
@@ -153,6 +153,32 @@ prompt:
 
 This is separate from `CodingLoopPolicy`: the state machine controls the task
 process, while `CodingLoopPolicy` remains the final task-success gate.
+
+## Semantic Task Success Checks
+
+`mini_cc.task_success` adds a deterministic semantic evidence layer on top of
+the staged process gate. It does not call another model. Instead, it extracts a
+small `TaskContract` from the user prompt and checks whether the plan, edits,
+and verification evidence are relevant to that contract.
+
+The semantic layer checks:
+
+- explicit paths, symbols, requested operations, and user constraints such as
+  "only modify this file" or "do not modify tests";
+- whether `planned_files` are grounded in prompt paths, explored candidates, or
+  files that were actually read;
+- whether edits stay inside `planned_files` and match the task type;
+- whether the verification command is a real test/lint/typecheck/build command
+  and relevant to the modified files;
+- whether successful verification output is meaningful, for example rejecting
+  `pytest` runs that report `collected 0 items` or `no tests ran`.
+
+The task-success artifact now also includes `task_contract`,
+`process_checks`, `semantic_checks`, `semantic_warnings`, and
+`semantic_blockers`. In short: `TaskStateMachine` checks whether the agent
+followed the required phases, `task_success` checks whether the evidence is
+relevant, and `CodingLoopPolicy` remains the final verification gate for changed
+code.
 
 ## Demo Package
 

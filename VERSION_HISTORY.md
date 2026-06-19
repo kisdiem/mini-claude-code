@@ -3,6 +3,32 @@
 This file records architecture iterations, benchmark status, and known
 validation limits for the teaching agent.
 
+## 3.7.1 - Semantic Task Success Checks
+
+Date: 2026-06-20
+
+Status: implemented and locally tested.
+
+What changed:
+
+- upgraded package version to `3.7.1`;
+- added `mini_cc.task_success` with deterministic task-contract extraction;
+- added semantic checks for plan relevance, edit relevance, verification
+  command relevance, and verification output quality;
+- integrated semantic checks into `TaskStateMachine` without replacing
+  `CodingLoopPolicy`;
+- extended `.mini_cc/task-success/last-run.json` with task contract, process
+  checks, semantic checks, warnings, and blockers;
+- added unit tests for path constraints, no-test-modification constraints,
+  documentation mismatches, fake verification commands, zero-test outputs, and
+  valid broad verification.
+
+Test status:
+
+- full `python -m unittest discover` passed locally:
+  - 270 tests;
+  - Python 3.10.
+
 ## 3.7.0 - Staged Coding Task State Machine
 
 Date: 2026-06-20

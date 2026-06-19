@@ -1,12 +1,24 @@
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
 from .coding_loop import is_likely_code_task, is_verification_command, parse_exit_code
+from .task_success import (
+    SemanticTaskDecision,
+    TaskContract,
+    VerificationEvidence,
+    extract_task_contract,
+    validate_edit,
+    validate_plan,
+    validate_verification_command,
+    validate_verification_output,
+)
 from .tools import ToolResult
 
 
@@ -50,6 +62,11 @@ class TaskState:
     phase_history: list[str] = field(default_factory=list)
     read_files: list[str] = field(default_factory=list)
     allow_new_files: bool = False
+    task_contract: dict[str, Any] = field(default_factory=dict)
+    semantic_checks: dict[str, bool] = field(default_factory=dict)
+    semantic_warnings: list[str] = field(default_factory=list)
+    semantic_blockers: list[str] = field(default_factory=list)
+    verification_evidence: list[dict[str, Any]] = field(default_factory=list)
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -72,6 +89,11 @@ class TaskState:
             "phase_history": list(self.phase_history),
             "read_files": list(self.read_files),
             "allow_new_files": self.allow_new_files,
+            "task_contract": dict(self.task_contract),
+            "semantic_checks": dict(self.semantic_checks),
+            "semantic_warnings": list(self.semantic_warnings),
+            "semantic_blockers": list(self.semantic_blockers),
+            "verification_evidence": list(self.verification_evidence),
         }
 
 
@@ -116,18 +138,34 @@ class TaskStateMachine:
         self.enabled = enabled
         self.max_repair_attempts = max(0, int(max_repair_attempts))
         self.state = TaskState(max_repair_attempts=self.max_repair_attempts)
+        self.contract: TaskContract | None = None
+        self.plan_decision: SemanticTaskDecision | None = None
+        self.edit_decision: SemanticTaskDecision | None = None
+        self.verification_evidence: VerificationEvidence | None = None
 
     def start(self, prompt: str) -> None:
         task_prompt = self._extract_user_task(prompt)
-        task_type = self._task_type(task_prompt)
-        is_code_task = is_likely_code_task(task_prompt) or task_type == "code_modification" or "代码" in task_prompt or "测试" in task_prompt
+        self.contract = extract_task_contract(task_prompt)
+        contract_task_type = self.contract.task_type
+        is_code_task = (
+            is_likely_code_task(task_prompt)
+            or contract_task_type != "unknown"
+            or "代码" in task_prompt
+            or "测试" in task_prompt
+        )
+        task_type = contract_task_type if is_code_task else "question"
         self.state = TaskState(
             phase=TaskPhase.INTAKE,
             task_type=task_type,
             is_code_task=is_code_task,
             max_repair_attempts=self.max_repair_attempts,
-            allow_new_files=self._allows_new_files(task_prompt),
+            allow_new_files=self.contract.allowed_new_files,
+            task_contract=self.contract.to_json(),
         )
+        self.plan_decision = None
+        self.edit_decision = None
+        self.verification_evidence = None
+        self._refresh_semantic_state()
         self._set_phase(TaskPhase.EXPLORE if self._requires_staged_loop() else TaskPhase.FINAL, "start")
 
     def observe_assistant_text(self, text: str) -> None:
@@ -140,10 +178,12 @@ class TaskStateMachine:
             self.state.localized = True
             self._set_phase(TaskPhase.LOCALIZE, "localized from assistant text")
         if paths and any(token in lowered for token in ["plan", "planned_files", "modify", "edit", "change", "计划", "修改", "文件"]):
-            self._add_many(self.state.planned_files, paths)
+            planned_paths = self._extract_planned_files(text) or paths
+            self._add_many(self.state.planned_files, planned_paths)
             self.state.planned = True
             self.state.localized = True
             self._set_phase(TaskPhase.PLAN, "planned files from assistant text")
+            self._validate_plan_semantics(text)
 
     def before_tool(self, name: str, tool_input: dict[str, Any]) -> PhaseDecision:
         if not self.enabled or not self._requires_staged_loop():
@@ -176,21 +216,32 @@ class TaskStateMachine:
             self.state.edited = True
             self.state.verified = False
             self.state.verification_passed = False
+            self._validate_edit_semantics(targets, result.content)
             if self.state.phase == TaskPhase.REPAIR:
                 self.state.repair_attempts += 1
             self._set_phase(TaskPhase.EDIT, "code edited")
         if name == "run_shell":
             command = str(tool_input.get("command", ""))
             if self._is_code_verification_command(command):
+                command_evidence = self._validate_verification_command_semantics(command)
+                output_evidence = validate_verification_output(command, result.content, prior=command_evidence)
+                self.verification_evidence = output_evidence
+                self.state.verification_evidence.append(output_evidence.to_json())
+                self._refresh_semantic_state()
                 self._add(self.state.verification_commands, command)
                 self.state.verified = True
                 exit_code = parse_exit_code(result.content)
-                self.state.verification_passed = exit_code == 0
+                self.state.verification_passed = (
+                    exit_code == 0
+                    and output_evidence.is_real_verification
+                    and output_evidence.is_relevant
+                    and output_evidence.has_meaningful_checks
+                )
                 if self.state.verification_passed:
                     self.state.last_failure_summary = ""
                     self._set_phase(TaskPhase.FINAL, "verification passed")
                 else:
-                    self.state.last_failure_summary = self._failure_summary(command, exit_code, result.content)
+                    self.state.last_failure_summary = output_evidence.failure_summary or self._failure_summary(command, exit_code, result.content)
                     self._set_phase(TaskPhase.REPAIR, "verification failed")
 
     def finish_decision(self) -> PhaseDecision:
@@ -204,10 +255,19 @@ class TaskStateMachine:
             return self._block("localization required", TaskPhase.LOCALIZE, self.localize_instruction())
         if not self.state.planned:
             return self._block("edit plan required", TaskPhase.PLAN, self.plan_instruction())
+        if self.plan_decision is not None and not self.plan_decision.allow:
+            return self._block("semantic plan gate failed", TaskPhase.PLAN, self.semantic_instruction(self.plan_decision))
         if not self.state.edited:
             return self._block("planned edit not applied", TaskPhase.EDIT, self.edit_instruction())
+        if self.edit_decision is not None and not self.edit_decision.allow:
+            return self._block("semantic edit gate failed", TaskPhase.EDIT, self.semantic_instruction(self.edit_decision))
         if not self.state.verified:
             return self._block("verification required", TaskPhase.VERIFY, self.verify_instruction())
+        if self.verification_evidence is not None:
+            if not self.verification_evidence.is_relevant:
+                return self._block("semantic verification relevance gate failed", TaskPhase.VERIFY, self.verification_relevance_instruction())
+            if self.verification_evidence.exit_code == 0 and not self.verification_evidence.has_meaningful_checks:
+                return self._block("semantic verification output gate failed", TaskPhase.VERIFY, self.verification_quality_instruction())
         if self.state.verification_passed:
             self._set_phase(TaskPhase.FINAL, "finish allowed")
             return PhaseDecision(True, next_phase=TaskPhase.FINAL)
@@ -293,6 +353,8 @@ class TaskStateMachine:
                     TaskPhase.PLAN,
                     f"This file is not in planned_files: {target}. Update the plan first or choose a planned file.",
                 )
+        if self.plan_decision is not None and not self.plan_decision.allow:
+            return self._block("semantic plan gate failed", TaskPhase.PLAN, self.semantic_instruction(self.plan_decision))
         return PhaseDecision(True, next_phase=TaskPhase.EDIT)
 
     def _before_shell(self, tool_input: dict[str, Any]) -> PhaseDecision:
@@ -308,7 +370,14 @@ class TaskStateMachine:
         return PhaseDecision(True, next_phase=self.state.phase)
 
     def _requires_staged_loop(self) -> bool:
-        return self.state.is_code_task and self.state.task_type == "code_modification"
+        return self.state.is_code_task and self.state.task_type in {
+            "bug_fix",
+            "feature_addition",
+            "refactor",
+            "test_fix",
+            "documentation",
+            "config/build",
+        }
 
     def _task_type(self, prompt: str) -> str:
         lowered = prompt.lower()
@@ -331,6 +400,116 @@ class TaskStateMachine:
     def _allows_new_files(self, prompt: str) -> bool:
         lowered = prompt.lower()
         return any(token in lowered for token in self.NEW_FILE_TOKENS)
+
+    def _validate_plan_semantics(self, assistant_text: str) -> None:
+        if self.contract is None:
+            return
+        self.plan_decision = validate_plan(self.contract, self.state, assistant_text)
+        self._refresh_semantic_state()
+
+    def _validate_edit_semantics(self, targets: list[str], diff_summary: str) -> None:
+        if self.contract is None:
+            return
+        self.edit_decision = validate_edit(self.contract, self.state, targets, diff_summary)
+        self._refresh_semantic_state()
+
+    def _validate_verification_command_semantics(self, command: str) -> VerificationEvidence:
+        contract = self.contract or extract_task_contract("")
+        return validate_verification_command(contract, self.state, command, self.state.modified_files, self.workspace)
+
+    def _refresh_semantic_state(self) -> None:
+        plan_ok = self.plan_decision.allow if self.plan_decision is not None else not self.state.planned
+        edit_ok = self.edit_decision.allow if self.edit_decision is not None else not self.state.edited
+        verification_relevant = self.verification_evidence.is_relevant if self.verification_evidence is not None else not self.state.verified
+        meaningful = self.verification_evidence.has_meaningful_checks if self.verification_evidence is not None else not self.state.verified
+        self.state.semantic_checks = {
+            "plan_relevant": bool(plan_ok),
+            "edit_relevant": bool(edit_ok),
+            "verification_relevant": bool(verification_relevant),
+            "meaningful_verification": bool(meaningful),
+        }
+        warnings: list[str] = []
+        blockers: list[str] = []
+        for decision in [self.plan_decision, self.edit_decision]:
+            if decision is None:
+                continue
+            if decision.allow and decision.score < 1.0:
+                warnings.append(decision.reason)
+            elif not decision.allow:
+                blockers.append(decision.reason)
+        if self.verification_evidence is not None:
+            if not self.verification_evidence.is_relevant:
+                blockers.append(self.verification_evidence.relevance_reason)
+            if not self.verification_evidence.has_meaningful_checks:
+                blockers.append(self.verification_evidence.meaningful_checks_reason)
+        self.state.semantic_warnings = self._unique(warnings)
+        self.state.semantic_blockers = self._unique(blockers)
+
+    def semantic_instruction(self, decision: SemanticTaskDecision) -> str:
+        return "Task semantic gate: " + decision.reason + "\n" + decision.instruction
+
+    def verification_relevance_instruction(self) -> str:
+        evidence = self.verification_evidence
+        reason = evidence.relevance_reason if evidence is not None else "verification did not cover the task"
+        return (
+            "Task semantic gate: verification is not relevant enough.\n"
+            "Run a verification command that directly checks the modified behavior or affected files.\n"
+            "Reason: " + reason
+        )
+
+    def verification_quality_instruction(self) -> str:
+        evidence = self.verification_evidence
+        reason = evidence.meaningful_checks_reason if evidence is not None else "verification output was not meaningful"
+        return (
+            "Task semantic gate: verification output is not meaningful enough.\n"
+            "Run a real test/lint/typecheck/build command that actually checks something.\n"
+            "Reason: " + reason
+        )
+
+    def write_artifact(self, status: str) -> Path | None:
+        if not self.enabled or not self.state.is_code_task:
+            return None
+        target = self.workspace / ".mini_cc" / "task-success" / "last-run.json"
+        normalized_status = self._artifact_status(status)
+        payload = {
+            "status": normalized_status,
+            "task_contract": self.state.task_contract,
+            "process_checks": {
+                "explored": self.state.explored,
+                "localized": self.state.localized,
+                "planned": self.state.planned,
+                "edited": self.state.edited,
+                "verified": self.state.verified,
+            },
+            "semantic_checks": dict(self.state.semantic_checks),
+            "planned_files": list(self.state.planned_files),
+            "modified_files": list(self.state.modified_files),
+            "verification_commands": list(self.state.verification_commands),
+            "semantic_warnings": list(self.state.semantic_warnings),
+            "semantic_blockers": list(self.state.semantic_blockers),
+            "last_failure_summary": self.state.last_failure_summary,
+            "task_state": self.state.to_json(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        except OSError:
+            return None
+        return target
+
+    def _artifact_status(self, status: str) -> str:
+        if status == "completed":
+            if self.state.semantic_blockers:
+                return "semantic_blocked"
+            if self.state.edited:
+                return "passed" if self.state.verification_passed else "failed"
+            return "not_required"
+        if status == "max_turns_reached":
+            if self.state.semantic_blockers:
+                return "semantic_blocked"
+            return "max_turns"
+        return status
 
     def _is_obviously_read_only_shell(self, command: str) -> bool:
         normalized = re.sub(r"\s+", " ", command.strip().lower())
@@ -383,6 +562,12 @@ class TaskStateMachine:
             self._add(paths, self._normalize_path(match.group(1)))
         return paths
 
+    def _extract_planned_files(self, text: str) -> list[str]:
+        match = re.search(r"planned_files\s*:\s*(?P<files>[^\n]+)", text, flags=re.IGNORECASE)
+        if not match:
+            return []
+        return self._extract_paths_from_text(match.group("files"))
+
     def _normalize_patch_path(self, raw_path: str) -> str:
         path = raw_path.split("\t", 1)[0].strip().strip("`'\"")
         if path.startswith("a/") or path.startswith("b/"):
@@ -429,3 +614,10 @@ class TaskStateMachine:
     def _add_many(self, target: list[str], items: list[str]) -> None:
         for item in items:
             self._add(target, item)
+
+    def _unique(self, items: list[str]) -> list[str]:
+        values: list[str] = []
+        for item in items:
+            if item and item not in values:
+                values.append(item)
+        return values

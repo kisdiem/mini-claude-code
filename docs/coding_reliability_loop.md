@@ -100,6 +100,38 @@ For code modification tasks, `CodingLoopPolicy` is the source of truth. A
 successful `git_diff`, `git_status`, or `context_snapshot` can appear in the
 evidence ledger, but it cannot set task success to passed.
 
+## Semantic Task Success Layer
+
+`TaskStateMachine` enforces the process phases. `mini_cc.task_success` adds a
+small deterministic evidence layer that checks whether those phases produced
+relevant evidence.
+
+The semantic layer extracts a `TaskContract` from the raw user prompt:
+
+- task type, such as bug fix, feature addition, refactor, documentation, or
+  config/build;
+- explicit file paths and symbols;
+- requested operations;
+- constraints such as only modifying one file, avoiding tests, preserving API
+  compatibility, or avoiding broad refactors;
+- acceptance keywords from paths, symbols, quoted strings, and failure words.
+
+It then validates:
+
+- plan relevance: `planned_files` must be grounded in prompt paths, explored
+  candidate files, or files that were read;
+- edit relevance: modified files must stay inside `planned_files` and respect
+  user constraints;
+- verification relevance: the command must be a real test/lint/typecheck/build
+  check and match the modified file type or task type;
+- verification output quality: a zero-exit command with `collected 0 items`,
+  `no tests ran`, `Ran 0 tests`, `No tests found`, or similar output does not
+  count as meaningful verification.
+
+This layer is intentionally heuristic and offline. It is designed to catch
+obvious false positives, not to prove semantic correctness for every possible
+program.
+
 ## Test Command Discovery
 
 The CLI can receive an explicit command:
@@ -157,6 +189,8 @@ The artifact records:
 - last verification result;
 - repair attempts;
 - status: `passed`, `failed`, `not_required`, or `max_attempts_reached`;
+- task contract and staged process checks when `TaskStateMachine` is enabled;
+- semantic checks, warnings, and blockers when `task_success` is enabled;
 - timestamp.
 
 This file is meant for demos and CI-like checks. It gives a reviewer a concrete
