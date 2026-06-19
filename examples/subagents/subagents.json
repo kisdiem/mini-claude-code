@@ -1,0 +1,18 @@
+{
+  "subagents": [
+    {
+      "name": "explorer",
+      "description": "Read-only project explorer.",
+      "system_prompt": "Gather facts and cite tool observations.",
+      "allowed_tools": ["list_files", "read_file", "search_text"],
+      "capabilities": ["explore"]
+    },
+    {
+      "name": "verifier",
+      "description": "Runs focused checks.",
+      "system_prompt": "Run tests or smoke checks and report evidence.",
+      "allowed_tools": ["run_shell", "git_status", "git_diff"],
+      "capabilities": ["verify"]
+    }
+  ]
+}

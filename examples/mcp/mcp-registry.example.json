@@ -1,0 +1,20 @@
+{
+  "schema_version": "2.1",
+  "servers": [
+    {
+      "name": "local-docs",
+      "transport": "stdio",
+      "auth": "none",
+      "trust_level": "local",
+      "tools": [
+        {
+          "name": "search_docs",
+          "description": "Search local project documentation.",
+          "capability_tags": ["docs", "search", "read-only"]
+        }
+      ],
+      "resources": [],
+      "prompts": []
+    }
+  ]
+}

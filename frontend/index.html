@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mini Claude Code Agent Console</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="top-nav">
+        <div class="brand">
+          <div class="brand-mark">MC</div>
+          <div>
+            <h1>Mini Claude Code</h1>
+            <p id="versionText">Agent 架构控制台</p>
+          </div>
+        </div>
+        <div class="top-nav-center">
+          <span class="page-kicker">Current Page</span>
+          <strong id="currentPageTitle">Agent Overview</strong>
+        </div>
+        <div class="top-actions">
+          <button id="themeToggle" class="icon-button" type="button" aria-label="切换主题">◐</button>
+          <button class="secondary" type="button" data-panel-target="settingsPanel">设置</button>
+          <div class="status-pill" id="statusPill"><span class="dot idle"></span>未运行</div>
+        </div>
+      </header>
+
+      <aside class="left-nav">
+        <nav aria-label="Agent modules">
+          <button class="nav-item active" type="button" data-section="overview">Agent Overview</button>
+          <button class="nav-item" type="button" data-section="model">Model</button>
+          <button class="nav-item" type="button" data-section="tools">Tools</button>
+          <button class="nav-item" type="button" data-section="memory">Memory</button>
+          <button class="nav-item" type="button" data-section="workflow">Workflow</button>
+          <button class="nav-item" type="button" data-section="runtime">Runtime</button>
+          <button class="nav-item" type="button" data-section="logs">Logs</button>
+          <button class="nav-item" type="button" data-section="guardrails">Guardrails</button>
+        </nav>
+      </aside>
+
+      <main class="main-content">
+        <section class="hero-card" id="overview">
+          <div>
+            <p class="eyebrow">Agent = Model + Tools + Orchestration + State/Memory + Runtime + Guardrails</p>
+            <h2>AI Agent 架构展示 / 管理 / 调试</h2>
+            <p class="hero-copy">
+              这个控制台把模型、工具、状态、调度和约束分开展示，避免把 Agent 误解成“只有一个大模型”。
+            </p>
+          </div>
+          <div class="hero-metrics">
+            <div>
+              <span class="metric-label">Token</span>
+              <strong id="tokenMetric">-</strong>
+            </div>
+            <div>
+              <span class="metric-label">Latency</span>
+              <strong id="latencyMetric">-</strong>
+            </div>
+            <div>
+              <span class="metric-label">Tool Calls</span>
+              <strong id="toolMetric">0</strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="architecture-grid" aria-label="Agent architecture modules">
+          <article class="module-card" data-module="model">
+            <span class="module-icon">M</span>
+            <h3>Model</h3>
+            <p>负责理解、规划、生成回复，不直接等于 Agent。</p>
+            <span class="badge neutral" id="modelBadge">未连接</span>
+          </article>
+          <article class="module-card" data-module="tools">
+            <span class="module-icon">T</span>
+            <h3>Tools</h3>
+            <p>文件、Shell、MCP、HTTP 等外部能力。</p>
+            <span class="badge neutral" id="toolsBadge">待调用</span>
+          </article>
+          <article class="module-card" data-module="memory">
+            <span class="module-icon">S</span>
+            <h3>State / Memory</h3>
+            <p>保存会话、上下文、工具结果和长期记忆。</p>
+            <span class="badge ok">启用</span>
+          </article>
+          <article class="module-card" data-module="workflow">
+            <span class="module-icon">O</span>
+            <h3>Orchestration</h3>
+            <p>Plan → Act → Observe → Verify 的执行循环。</p>
+            <span class="badge neutral" id="workflowBadge">Ready</span>
+          </article>
+          <article class="module-card" data-module="runtime">
+            <span class="module-icon">R</span>
+            <h3>Runtime</h3>
+            <p>进程、权限、超时、日志、结果解析。</p>
+            <span class="badge neutral" id="runtimeBadge">Idle</span>
+          </article>
+          <article class="module-card" data-module="guardrails">
+            <span class="module-icon">G</span>
+            <h3>Guardrails</h3>
+            <p>权限策略、密钥脱敏、危险命令拦截。</p>
+            <span class="badge ok">Active</span>
+          </article>
+        </section>
+
+        <section class="content-grid">
+          <section class="card run-card">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Task Runner</p>
+                <h3>任务输入</h3>
+              </div>
+              <div class="actions">
+                <button id="runBtn" type="button">运行 Agent</button>
+              </div>
+            </div>
+            <textarea id="prompt" spellcheck="false" placeholder="描述你要 Agent 完成的目标，例如：读取项目结构并解释 Agent Runtime 的组成。"></textarea>
+            <div class="form-hint" id="promptHint">Enter 文本后点击运行。空任务不会提交。</div>
+          </section>
+
+          <section class="card loop-card" id="workflow">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Agent Loop</p>
+                <h3>User Input → Planning → Tool Use → Observation → Memory Update → Final Response</h3>
+              </div>
+            </div>
+            <div class="loop-flow" id="loopFlow" aria-label="Agent loop flow"></div>
+          </section>
+        </section>
+
+        <section class="card final-answer-card">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Final Answer</p>
+              <h3>最终回答</h3>
+            </div>
+            <span class="badge neutral" id="answerBadge">等待运行</span>
+          </div>
+          <div id="finalAnswer" class="empty-state">运行完成后，这里会展示模型最终回答；原始 stdout / stderr 保留在右侧日志。</div>
+        </section>
+
+        <section class="settings-drawer card" id="settingsPanel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Connection & Runtime</p>
+              <h3>模型连接与运行设置</h3>
+            </div>
+          </div>
+          <div class="settings-grid">
+            <label>
+              Provider
+              <select id="provider">
+                <option value="mock">Mock 本地演示</option>
+                <option value="openai">OpenAI-compatible</option>
+                <option value="anthropic">Anthropic-compatible</option>
+              </select>
+            </label>
+            <label>
+              API Key
+              <input id="apiKey" type="password" autocomplete="off" placeholder="手动输入 API key，仅用于本次请求" />
+            </label>
+            <label>
+              Base URL
+              <input id="baseUrl" type="url" placeholder="https://api.openai.com/v1" />
+            </label>
+            <label>
+              Model
+              <input id="model" type="text" placeholder="gpt-5.5" />
+            </label>
+            <label>
+              Reasoning
+              <select id="reasoningEffort">
+                <option value="">默认</option>
+                <option value="low">low</option>
+                <option value="medium">medium</option>
+                <option value="high">high</option>
+                <option value="xhigh">xhigh</option>
+              </select>
+            </label>
+            <label>
+              Workspace
+              <input id="workspace" type="text" placeholder="本地 workspace 路径" />
+            </label>
+            <label>
+              Permission
+              <select id="permissionMode">
+                <option value="auto">auto</option>
+                <option value="read-only">read-only</option>
+                <option value="ask">ask</option>
+                <option value="bypass">bypass</option>
+              </select>
+            </label>
+            <div class="inline-grid">
+              <label>
+                Max turns
+                <input id="maxTurns" type="number" min="1" max="30" value="8" />
+              </label>
+              <label>
+                Timeout
+                <input id="timeout" type="number" min="5" max="600" value="120" />
+              </label>
+            </div>
+            <label class="check-row">
+              <input id="s20" type="checkbox" checked />
+              <span>启用 S20 工具层</span>
+            </label>
+          </div>
+        </section>
+      </main>
+
+      <aside class="right-panel">
+        <section class="card status-card" id="runtime">
+          <div class="section-heading compact-heading">
+            <h3>Agent 状态</h3>
+            <span class="badge neutral" id="runStatus">Idle</span>
+          </div>
+          <dl class="status-list">
+            <div>
+              <dt>后端</dt>
+              <dd id="backendStatus">连接中</dd>
+            </div>
+            <div>
+              <dt>工作区</dt>
+              <dd id="workspaceStatus">-</dd>
+            </div>
+            <div>
+              <dt>当前目标</dt>
+              <dd id="currentGoal">等待任务输入</dd>
+            </div>
+          </dl>
+          <div class="progress-track" aria-label="执行进度"><span id="progressBar"></span></div>
+        </section>
+
+        <section class="card" id="tools">
+          <details open>
+            <summary>Tool Calls</summary>
+            <div id="toolCalls" class="stack-list"></div>
+          </details>
+        </section>
+
+        <section class="card" id="memory">
+          <details open>
+            <summary>Memory / State Snapshot</summary>
+            <div id="memoryState" class="state-grid"></div>
+          </details>
+        </section>
+
+        <section class="card" id="guardrails">
+          <details open>
+            <summary>Guardrails 检查</summary>
+            <div id="guardrailsList" class="stack-list"></div>
+          </details>
+        </section>
+
+        <section class="card" id="logs">
+          <div class="section-heading compact-heading">
+            <h3>Runtime Logs</h3>
+            <button id="clearBtn" type="button" class="ghost danger">清空日志</button>
+          </div>
+          <pre id="output" class="console">等待运行。</pre>
+        </section>
+      </aside>
+
+      <footer class="bottom-status">
+        <span>Provider: <strong id="providerSummary">mock</strong></span>
+        <span>Permission: <strong id="permissionSummary">auto</strong></span>
+        <span>Max turns: <strong id="turnSummary">8</strong></span>
+        <span>Timeout: <strong id="timeoutSummary">120s</strong></span>
+      </footer>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

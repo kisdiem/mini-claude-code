@@ -1,0 +1,4 @@
+anthropic>=0.60.0
+openai>=2.0.0
+websocket-client>=1.8.0
+tkinterdnd2>=0.4.3

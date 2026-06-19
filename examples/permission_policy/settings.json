@@ -1,0 +1,16 @@
+{
+  "permission_policy": {
+    "default": "ask",
+    "tools": {
+      "read_file": "allow",
+      "list_files": "allow",
+      "search_text": "allow",
+      "write_file": "ask",
+      "run_shell": "ask"
+    },
+    "deny_paths": [
+      ".env",
+      ".mini_cc/secrets/*"
+    ]
+  }
+}

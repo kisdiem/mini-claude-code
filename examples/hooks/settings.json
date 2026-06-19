@@ -1,0 +1,13 @@
+{
+  "hooks": [
+    {
+      "name": "log-tool-use",
+      "type": "command",
+      "event": "PreToolUse",
+      "matcher": {
+        "tool": "*"
+      },
+      "command": "echo PreToolUse ${tool_name}"
+    }
+  ]
+}
