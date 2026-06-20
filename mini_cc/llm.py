@@ -79,7 +79,6 @@ class OpenAIProvider:
         self.model = model
         self.max_tokens = max_tokens
         self.reasoning_effort = reasoning_effort
-        self.input_items: list[Any] = []
 
     def complete(
         self,
@@ -87,20 +86,7 @@ class OpenAIProvider:
         tools: list[dict[str, Any]],
         system: str,
     ) -> Any:
-        last = messages[-1]
-        if last["role"] == "user" and isinstance(last["content"], list):
-            for tool_result in last["content"]:
-                self.input_items.append(
-                    {
-                        "type": "function_call_output",
-                        "call_id": tool_result["tool_use_id"],
-                        "output": tool_result.get("content", ""),
-                    }
-                )
-        else:
-            content = str(last.get("content", ""))
-            self.input_items.append({"role": "user", "content": content})
-        input_payload: Any = self.input_items
+        input_payload: Any = self.messages_to_responses_input(messages)
 
         request: dict[str, Any] = {
             "model": self.model,
@@ -113,8 +99,48 @@ class OpenAIProvider:
         if self.reasoning_effort:
             request["reasoning"] = {"effort": self.reasoning_effort}
         response = self.client.responses.create(**request)
-        self.input_items.extend(getattr(response, "output", []) or [])
         return self._to_blocks(response)
+
+    @staticmethod
+    def messages_to_responses_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        input_items: list[dict[str, Any]] = []
+        for message in messages:
+            role = str(message.get("role", "user"))
+            content = message.get("content", "")
+            if isinstance(content, str):
+                input_items.append({"role": role, "content": content})
+                continue
+            if role == "assistant" and isinstance(content, list):
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    block_type = block.get("type")
+                    if block_type == "text" and block.get("text"):
+                        input_items.append({"role": "assistant", "content": str(block.get("text", ""))})
+                    elif block_type == "tool_use":
+                        input_items.append(
+                            {
+                                "type": "function_call",
+                                "call_id": str(block.get("id", "")),
+                                "name": str(block.get("name", "")),
+                                "arguments": json.dumps(block.get("input") or {}, ensure_ascii=False),
+                            }
+                        )
+                continue
+            if role == "user" and isinstance(content, list):
+                for block in content:
+                    if not isinstance(block, dict) or block.get("type") != "tool_result":
+                        continue
+                    input_items.append(
+                        {
+                            "type": "function_call_output",
+                            "call_id": str(block.get("tool_use_id", "")),
+                            "output": str(block.get("content", "")),
+                        }
+                    )
+                continue
+            input_items.append({"role": role, "content": str(content)})
+        return input_items
 
     def _tool_schema(self, tool: dict[str, Any]) -> dict[str, Any]:
         return {

@@ -3,6 +3,54 @@
 This file records architecture iterations, benchmark status, and known
 validation limits for the teaching agent.
 
+## 3.8.0 - Real Usability Hardening
+
+Date: 2026-06-20
+
+Status: implemented and locally tested.
+
+What changed:
+
+- upgraded package version to `3.8.0`;
+- added `mini_cc.task_runtime` as a compatibility layer that coordinates
+  `TaskStateMachine` process gates with `CodingLoopPolicy` verification gates;
+- added `mini_cc.verification` for deterministic local verification command
+  discovery across Python, Node/TypeScript, Go, Rust, and Java projects;
+- improved repair instructions with failed command, exit code, output excerpt,
+  modified files, and a minimal-repair next step;
+- refactored `OpenAIProvider` so each request is derived from the current
+  `Agent.messages` instead of retaining an uncontrolled internal history;
+- added `python -m mini_cc.evals.real_usability`, a deterministic local eval
+  for process blocking, fake verification rejection, successful verification,
+  repair prompting, and read/plan-before-edit enforcement.
+
+Test status:
+
+- full `python -m unittest discover` passed locally:
+  - 280 tests;
+  - Python 3.10.
+- `python -m mini_cc.evals.real_usability` passed locally:
+  - 5 cases;
+  - 100% local smoke pass rate.
+
+## 3.7.2 - Documentation Positioning Cleanup
+
+Date: 2026-06-20
+
+Status: documentation-only update.
+
+What changed:
+
+- upgraded package version to `3.7.2`;
+- rewrote the main README introduction in English;
+- clarified project scope as a teaching and research-oriented local
+  coding-agent runtime;
+- removed or softened benchmark/parity language from the public introduction;
+- moved localized and historical review materials out of the top-level project
+  pitch;
+- clarified that local smoke validation is not an external benchmark score;
+- added `docs/interview_summary.md` for HR/interview review.
+
 ## 3.7.1 - Semantic Task Success Checks
 
 Date: 2026-06-20

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .tools import ToolResult
+from .verification import best_verification_command
 
 
 CODING_TASK_TOKENS = {
@@ -268,8 +269,10 @@ class CodingLoopPolicy:
             command = last.command
             exit_code = "n/a" if last.exit_code is None else str(last.exit_code)
         unresolved = "none"
-        if decision_status in {"failed", "max_attempts_reached"} or (last is not None and not last.passed):
+        if decision_status in {"failed", "max_attempts_reached", "max_turns_reached"} or (last is not None and not last.passed):
             unresolved = self.state.last_failure_summary or "verification failed; inspect the command output"
+            if last is None:
+                unresolved = "verification was not completed before the run stopped"
         return "\n".join(
             [
                 "Summary:",
@@ -381,46 +384,7 @@ def normalize_command(command: str) -> str:
 
 
 def discover_test_command(workspace: Path, explicit: str | None = None) -> str | None:
-    if explicit:
-        return explicit
-    root = workspace.expanduser().resolve()
-    package_json = root / "package.json"
-    if package_json.exists():
-        try:
-            scripts = json.loads(package_json.read_text(encoding="utf-8")).get("scripts", {})
-        except (OSError, json.JSONDecodeError):
-            scripts = {}
-        if isinstance(scripts, dict):
-            if "test" in scripts:
-                return "npm test"
-            if "lint" in scripts:
-                return "npm run lint"
-    if (root / "Cargo.toml").exists():
-        return "cargo test"
-    if (root / "go.mod").exists():
-        return "go test ./..."
-    if (root / "pom.xml").exists():
-        return "mvn test"
-    if (root / "gradlew").exists() or (root / "gradlew.bat").exists() or (root / "build.gradle").exists():
-        return "./gradlew test"
-    if (root / "pytest.ini").exists():
-        return "python -m pytest"
-    pyproject = root / "pyproject.toml"
-    if pyproject.exists():
-        try:
-            pyproject_text = pyproject.read_text(encoding="utf-8", errors="replace").lower()
-        except OSError:
-            pyproject_text = ""
-        if "pytest" in pyproject_text or "[tool.pytest" in pyproject_text:
-            return "python -m pytest"
-    tests_dir = root / "tests"
-    if tests_dir.exists() and tests_dir.is_dir():
-        if has_unittest_style_tests(tests_dir):
-            return "python -m unittest discover"
-        return "python -m pytest"
-    if (root / "setup.py").exists():
-        return "python -m unittest discover"
-    return None
+    return best_verification_command(workspace, explicit=explicit)
 
 
 def has_unittest_style_tests(tests_dir: Path) -> bool:

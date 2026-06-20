@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from mini_cc.agent import Agent
+from mini_cc.task_runtime import TaskRuntime
 from mini_cc.llm import MockBlock, MockResponse
 from mini_cc.task_state import TaskStateMachine
 from mini_cc.tools import ToolRunner
@@ -137,6 +138,28 @@ class AgentTaskStateTests(unittest.TestCase):
             self.assertFalse((root / "app.py").exists())
             self.assertIn("Task phase blocked", "\n".join(output))
             self.assertIn("Task phase: EXPLORE", json.dumps(provider.prompts, ensure_ascii=False))
+
+    def test_agent_uses_injected_task_runtime_for_tool_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            provider = ImmediateWriteThenFinalProvider()
+            output: list[str] = []
+            task_state = TaskStateMachine(root)
+            runtime = TaskRuntime(root, task_state_machine=task_state)
+            agent = Agent(
+                provider,  # type: ignore[arg-type]
+                ToolRunner(root, permission="auto"),
+                max_turns=3,
+                output=output.append,
+                task_state_machine=task_state,
+                task_runtime=runtime,
+            )
+
+            agent.run("fix bug in app.py")
+
+            self.assertIs(agent.task_runtime, runtime)
+            self.assertFalse((root / "app.py").exists())
+            self.assertIn("Task phase blocked", "\n".join(output))
 
     def test_agent_can_complete_read_plan_edit_verify_flow(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

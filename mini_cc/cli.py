@@ -30,6 +30,7 @@ from .session import SessionStore
 from .s20 import S20_SYSTEM_PROMPT, S20ToolRunner
 from .subagents import SubagentRuntime
 from .task_state import TaskStateMachine
+from .task_runtime import TaskRuntime
 from .tool_eval import run_real_tool_use_eval
 from .tool_runtime import write_tool_runtime_evidence_smoke, write_tool_runtime_report
 from .tools import ToolRunner
@@ -531,6 +532,11 @@ def build_agent(args: argparse.Namespace, output: Callable[[str], None] = print)
         max_repair_attempts=args.max_repair_attempts,
         enabled=True,
     )
+    task_runtime = TaskRuntime(
+        config.workspace,
+        task_state_machine=task_state_machine,
+        coding_loop=coding_loop,
+    )
     system_prompt = system_prompt_for_workspace(
         S20_SYSTEM_PROMPT if args.s20 else SYSTEM_PROMPT,
         config.workspace,
@@ -566,6 +572,7 @@ def build_agent(args: argparse.Namespace, output: Callable[[str], None] = print)
             model_context_token_budget=args.model_context_token_budget,
             coding_loop=coding_loop,
             task_state_machine=task_state_machine,
+            task_runtime=task_runtime,
         )
     return Agent(
         provider,
@@ -578,6 +585,7 @@ def build_agent(args: argparse.Namespace, output: Callable[[str], None] = print)
         model_context_token_budget=args.model_context_token_budget,
         coding_loop=coding_loop,
         task_state_machine=task_state_machine,
+        task_runtime=task_runtime,
     )
 
 
