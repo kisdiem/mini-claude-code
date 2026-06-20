@@ -9,6 +9,8 @@ from typing import Any
 
 from .permission import PermissionPolicy, PermissionRisk, classify_shell_command, decide_permission
 from .permission_ledger import PermissionLedger
+from .project_index import ProjectIndex, render_json
+from .repair import build_repair_context, parse_failure_output
 from .tool_recovery import ToolRecoveryPolicy, recover_tool_failure
 
 
@@ -89,6 +91,8 @@ class ToolRunner:
         self.recovery_policy = recovery_policy
         self.permission_envelope: set[PermissionRisk] | None = None
         self.permission_envelope_reason = ""
+        self.last_shell_command = ""
+        self.last_shell_output = ""
 
     def clone_for_workspace(self, workspace: Path) -> "ToolRunner":
         clone = ToolRunner(
@@ -206,6 +210,45 @@ class ToolRunner:
                     "required": ["command"],
                 },
             },
+            {
+                "name": "project_overview",
+                "description": "Summarize project type, key config, source/test directories, and recommended verification commands.",
+                "input_schema": {"type": "object", "properties": {}},
+            },
+            {
+                "name": "symbol_search",
+                "description": "Search indexed Python/JS/TS symbols and return matching files, lines, and symbol types.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}, "max_results": {"type": "integer", "default": 20}},
+                    "required": ["query"],
+                },
+            },
+            {
+                "name": "related_files",
+                "description": "Return related tests, sources, and config files for a workspace path.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                },
+            },
+            {
+                "name": "failure_context",
+                "description": "Parse a test/build/lint/typecheck failure output into structured repair context.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "command_output": {"type": "string", "default": ""},
+                        "command": {"type": "string", "default": ""},
+                    },
+                },
+            },
+            {
+                "name": "git_diff_summary",
+                "description": "Return a concise summary of current git modifications, not raw full diff.",
+                "input_schema": {"type": "object", "properties": {}},
+            },
         ]
 
     def run(self, name: str, tool_input: dict[str, Any]) -> ToolResult:
@@ -246,6 +289,16 @@ class ToolRunner:
                 return ToolResult(self.apply_patch(**tool_input))
             if name == "run_shell":
                 return ToolResult(self.run_shell(**tool_input))
+            if name == "project_overview":
+                return ToolResult(self.project_overview())
+            if name == "symbol_search":
+                return ToolResult(self.symbol_search(**tool_input))
+            if name == "related_files":
+                return ToolResult(self.related_files(**tool_input))
+            if name == "failure_context":
+                return ToolResult(self.failure_context(**tool_input))
+            if name == "git_diff_summary":
+                return ToolResult(self.git_diff_summary())
             raise ToolError(f"Unknown tool: {name}")
         except Exception as exc:
             return ToolResult(str(exc), is_error=True)
@@ -571,7 +624,86 @@ class ToolRunner:
             f"stdout:\n{stdout}\n"
             f"stderr:\n{stderr}"
         )
+        self.last_shell_command = command
+        self.last_shell_output = output
         return _clip(output)
+
+    def project_overview(self) -> str:
+        index = ProjectIndex.build(self.root)
+        return _clip(render_json(index.summarize_project()))
+
+    def symbol_search(self, query: str, max_results: int = 20) -> str:
+        index = ProjectIndex.build(self.root)
+        rows = [
+            {
+                "name": symbol.name,
+                "kind": symbol.kind,
+                "path": symbol.path,
+                "line": symbol.line,
+                "detail": symbol.detail,
+            }
+            for symbol in index.find_symbol(query)[: max(1, min(int(max_results), 100))]
+        ]
+        if not rows:
+            rows = [
+                {
+                    "path": record.path,
+                    "role": record.likely_role,
+                    "suffix": record.suffix,
+                    "size": record.size,
+                }
+                for record in index.find_relevant_files(query, max_results=max_results)
+            ]
+        return _clip(render_json({"query": query, "results": rows}))
+
+    def related_files(self, path: str) -> str:
+        target = self.resolve(path)
+        rel = target.relative_to(self.root).as_posix()
+        index = ProjectIndex.build(self.root)
+        payload = {
+            "path": rel,
+            "tests": index.related_tests_for(rel),
+            "sources": index.related_sources_for(rel),
+            "config_files": index.config_files[:20],
+        }
+        return _clip(render_json(payload))
+
+    def failure_context(self, command_output: str = "", command: str = "") -> str:
+        output = command_output or self.last_shell_output
+        used_command = command or self.last_shell_command
+        failure = parse_failure_output(used_command, output)
+        index = ProjectIndex.build(self.root)
+        context = build_repair_context(failure, [], [], index)
+        return _clip(render_json({"failure": failure.to_json(), "repair_context": context.to_json()}))
+
+    def git_diff_summary(self) -> str:
+        def run_git(args: list[str]) -> str:
+            completed = subprocess.run(
+                ["git", *args],
+                cwd=self.root,
+                capture_output=True,
+                shell=False,
+                timeout=10,
+            )
+            return _decode_process_output(completed.stdout) + _decode_process_output(completed.stderr)
+
+        try:
+            status = run_git(["status", "--short"])
+            stat = run_git(["diff", "--stat"])
+            names = run_git(["diff", "--name-status"])
+        except Exception as exc:
+            raise ToolError(f"git diff summary failed: {exc}") from exc
+        changed = []
+        for line in names.splitlines():
+            parts = line.split(maxsplit=1)
+            if len(parts) == 2:
+                changed.append({"status": parts[0], "path": parts[1].replace("\\", "/")})
+        payload = {
+            "status_short": status.strip().splitlines()[:80],
+            "changed_files": changed[:80],
+            "stat": stat.strip().splitlines()[:80],
+        }
+        return _clip(render_json(payload))
 
     def _require_permission(
         self,

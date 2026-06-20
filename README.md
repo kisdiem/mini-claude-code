@@ -72,12 +72,32 @@ reported.
 
 - Agent loop with Anthropic, OpenAI, and deterministic mock providers.
 - Tool schemas for workspace file operations and shell commands.
+- Project context indexing for project type detection, source/test/config
+  discovery, Python AST symbols, JS/TS symbol hints, and related-file lookup.
 - Permission policy around risky operations.
 - `TaskStateMachine` for explore -> localize -> plan -> edit -> verify ->
   repair -> final process control.
+- `TaskPlanner` for deterministic task context, candidate files, minimal edit
+  planning, and verification command suggestions.
+- Structured repair context from failing test/build/typecheck output so repair
+  turns start from concrete files, symbols, and failure excerpts.
 - `CodingLoopPolicy` for real verification after code edits.
 - Semantic task-success checks for plan, edit, verification relevance, and
   output quality.
+- Realistic local eval cases that create temporary projects and drive the real
+  agent/tool/runtime path with an offline scripted provider.
+
+## Local Evals
+
+Run the deterministic realistic eval harness:
+
+```bash
+python -m mini_cc.evals.realistic_tasks
+```
+
+Each case reports pass status, modified files, planned files, verification
+commands, tool-call count, repair attempts, constraint violations, and the
+Evidence Report path.
 - Verification command discovery for local projects.
 - Evidence Report artifact for each core coding run.
 

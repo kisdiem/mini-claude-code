@@ -5,14 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mini-claude-code"
 version = "3.9.0"
-description = "A teaching-oriented Claude Code style AI Agent runtime with tools, hooks, MCP, subagents, permissions, and desktop UI."
+description = "An evidence-first local coding-agent harness with context indexing, structured repair, and verification-focused reporting."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [
   { name = "Mini Claude Code Contributors" }
 ]
-keywords = ["agent", "claude-code", "mcp", "hooks", "subagents", "desktop"]
+keywords = ["agent", "coding-agent", "verification", "evals", "context-index"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",

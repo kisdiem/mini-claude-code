@@ -107,7 +107,10 @@ class VerificationPolicy:
         if parsed["no_checks"]:
             blockers.append("verification output indicates no meaningful checks")
         if parsed["empty_success"]:
-            blockers.append("verification output is empty or too weak to prove checks ran")
+            if command_type in {"build", "typecheck"}:
+                warnings.append("command succeeded with no output; treat as weak verification evidence")
+            else:
+                blockers.append("verification output is empty or too weak to prove checks ran")
         if exit_code not in (0, None):
             blockers.append("verification command failed")
 
@@ -138,13 +141,24 @@ class VerificationPolicy:
 
 def default_rules() -> list[VerificationRule]:
     return [
-        VerificationRule("fake-inspection", "fake", [r"^(?:echo|cat|type|ls|dir|pwd|find|grep)(?:\s|$)", r"^git\s+(?:status|diff)(?:\s|$)"], confidence=1.0),
+        VerificationRule(
+            "fake-inspection",
+            "fake",
+            [
+                r"^(?:echo|cat|type|ls|dir|pwd|find|grep|true)(?:\s|$)",
+                r"^exit\s+0$",
+                r"^(?:python|python3|py)(?:\s+-3)?\s+-c\s+[\"']?\s*print\(['\"]ok['\"]\)",
+                r"^git\s+(?:status|diff)(?:\s|$)",
+            ],
+            confidence=1.0,
+        ),
         VerificationRule("runtime-evidence", "runtime-evidence", [r"^(?:context_snapshot|list_files|read_file|search_text|git_status|git_diff)$"], confidence=1.0),
         VerificationRule("pytest", "test", [r"^(?:uv\s+run\s+)?pytest(?:\s|$)", r"^(?:python|python3|py)(?:\s+-3)?\s+-m\s+pytest(?:\s|$)"], [".py", ".pyi"], ["pytest.ini", "pyproject.toml", "tests"], 0.9, "pytest test command"),
         VerificationRule("unittest", "test", [r"^(?:python|python3|py)(?:\s+-3)?\s+-m\s+unittest(?:\s|$)", r"^(?:python|python3|py)(?:\s+-3)?\s+manage\.py\s+test(?:\s|$)"], [".py", ".pyi"], ["tests"], 0.86, "Python unittest or Django test command"),
         VerificationRule("python-test-runners", "test", [r"^tox(?:\s|$)", r"^nox(?:\s|$)", r"^hatch\s+test(?:\s|$)"], [".py", ".pyi"], ["tox.ini", "noxfile.py", "pyproject.toml"], 0.82),
         VerificationRule("node-test", "test", [r"^(?:npm|pnpm|yarn)(?:\s+run)?\s+test(?:\s|$)", r"^bun\s+test(?:\s|$)"], [".js", ".jsx", ".ts", ".tsx"], ["package.json"], 0.84),
         VerificationRule("python-lint", "lint", [r"^ruff(?:\s+check)?(?:\s|$)"], [".py", ".pyi"], ["pyproject.toml", "ruff.toml"], 0.82),
+        VerificationRule("python-compileall", "build", [r"^(?:python|python3|py)(?:\s+-3)?\s+-m\s+compileall(?:\s|$)"], [".py", ".pyi"], ["pyproject.toml", "setup.py"], 0.74),
         VerificationRule("node-lint", "lint", [r"^(?:npm|pnpm|yarn)(?:\s+run)?\s+lint(?:\s|$)", r"^eslint(?:\s|$)"], [".js", ".jsx", ".ts", ".tsx"], ["package.json"], 0.78),
         VerificationRule("python-typecheck", "typecheck", [r"^mypy(?:\s|$)"], [".py", ".pyi"], ["pyproject.toml", "mypy.ini"], 0.78),
         VerificationRule("ts-typecheck", "typecheck", [r"^(?:npx\s+)?tsc(?:\s|$)", r"^(?:npm|pnpm|yarn)(?:\s+run)?\s+(?:typecheck|check)(?:\s|$)", r"^yarn\s+typecheck(?:\s|$)"], [".ts", ".tsx", ".js", ".jsx"], ["package.json", "tsconfig.json"], 0.8),

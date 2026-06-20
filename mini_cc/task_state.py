@@ -9,6 +9,9 @@ from pathlib import Path
 from typing import Any
 
 from .coding_loop import is_likely_code_task, is_verification_command, parse_exit_code
+from .project_index import ProjectIndex, render_json
+from .repair import build_repair_context, parse_failure_output
+from .task_planner import build_task_context, plan_minimal_edit
 from .task_success import (
     SemanticTaskDecision,
     TaskContract,
@@ -67,6 +70,7 @@ class TaskState:
     semantic_warnings: list[str] = field(default_factory=list)
     semantic_blockers: list[str] = field(default_factory=list)
     verification_evidence: list[dict[str, Any]] = field(default_factory=list)
+    repair_context: dict[str, Any] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -94,13 +98,26 @@ class TaskState:
             "semantic_warnings": list(self.semantic_warnings),
             "semantic_blockers": list(self.semantic_blockers),
             "verification_evidence": list(self.verification_evidence),
+            "repair_context": dict(self.repair_context),
         }
 
 
 class TaskStateMachine:
     """Enforce a staged coding workflow around the model/tool loop."""
 
-    EXPLORE_TOOLS = {"list_files", "read_file", "search_text", "context_snapshot", "git_status", "git_diff"}
+    EXPLORE_TOOLS = {
+        "list_files",
+        "read_file",
+        "search_text",
+        "context_snapshot",
+        "git_status",
+        "git_diff",
+        "project_overview",
+        "symbol_search",
+        "related_files",
+        "failure_context",
+        "git_diff_summary",
+    }
     READ_TOOLS = {"read_file"}
     WRITE_TOOLS = {"write_file", "replace_text", "apply_patch"}
     NON_VERIFICATION_COMMANDS = {"echo", "cat", "ls", "dir", "pwd", "find", "grep", "git status", "git diff"}
@@ -153,7 +170,7 @@ class TaskStateMachine:
             or "代码" in task_prompt
             or "测试" in task_prompt
         )
-        task_type = contract_task_type if is_code_task else "question"
+        task_type = contract_task_type if is_code_task and contract_task_type != "unknown" else (self._task_type(task_prompt) if is_code_task else "question")
         self.state = TaskState(
             phase=TaskPhase.INTAKE,
             task_type=task_type,
@@ -165,6 +182,7 @@ class TaskStateMachine:
         self.plan_decision = None
         self.edit_decision = None
         self.verification_evidence = None
+        self._seed_task_context(task_prompt)
         self._refresh_semantic_state()
         self._set_phase(TaskPhase.EXPLORE if self._requires_staged_loop() else TaskPhase.FINAL, "start")
 
@@ -242,6 +260,7 @@ class TaskStateMachine:
                     self._set_phase(TaskPhase.FINAL, "verification passed")
                 else:
                     self.state.last_failure_summary = output_evidence.failure_summary or self._failure_summary(command, exit_code, result.content)
+                    self._update_repair_context(command, result.content)
                     self._set_phase(TaskPhase.REPAIR, "verification failed")
 
     def finish_decision(self) -> PhaseDecision:
@@ -315,10 +334,15 @@ class TaskStateMachine:
         )
 
     def repair_instruction(self) -> str:
+        repair_context = self.state.repair_context or {}
         return (
-            "Task phase: REPAIR. The last verification failed. Inspect the failure output, identify the cause, "
-            "make one minimal repair to the planned/read file set, then run the same real verification command again.\n\n"
-            "Last failure summary:\n" + (self.state.last_failure_summary or "[no failure summary]")
+            "Task phase: REPAIR. The last verification failed. Use the structured RepairContext below. "
+            "First read every relevant file listed in `suggested_next_reads` that has not already been read, then make one minimal repair "
+            "to the planned/read file set and rerun the same real verification command.\n\n"
+            "RepairContext:\n"
+            + (render_json(repair_context) if repair_context else "{}")
+            + "\n\nLast failure summary:\n"
+            + (self.state.last_failure_summary or "[no failure summary]")
         )
 
     def failed_final_instruction(self) -> str:
@@ -381,8 +405,14 @@ class TaskStateMachine:
 
     def _task_type(self, prompt: str) -> str:
         lowered = prompt.lower()
+        if any(token in lowered for token in ["readme", "docs", "documentation", "changelog"]):
+            return "documentation"
+        if any(token in lowered for token in ["pyproject", "package.json", "tsconfig", "config", "build"]):
+            return "config/build"
+        if any(token in lowered for token in ["test", "failing", "failure"]):
+            return "test_fix"
         if any(token in lowered for token in self.MODIFICATION_TOKENS):
-            return "code_modification"
+            return "bug_fix"
         return "question"
 
     def _extract_user_task(self, prompt: str) -> str:
@@ -534,6 +564,12 @@ class TaskStateMachine:
                 self.state.localized = True
         elif name in {"git_diff", "context_snapshot"}:
             self._add_many(self.state.candidate_files, self._extract_paths_from_text(result.content))
+        elif name == "symbol_search":
+            self._add_many(self.state.candidate_files, self._extract_paths_from_text(result.content))
+            if self.state.candidate_files:
+                self.state.localized = True
+        elif name == "related_files":
+            self._add_many(self.state.candidate_files, self._extract_paths_from_text(result.content))
 
     def _target_files_for_tool(self, name: str, tool_input: dict[str, Any]) -> list[str]:
         if name in {"write_file", "replace_text"}:
@@ -595,6 +631,36 @@ class TaskStateMachine:
         if len(excerpt) > 1000:
             excerpt = excerpt[:1000] + "\n[truncated]"
         return f"{command} exited with {exit_code}: {excerpt}"
+
+    def _seed_task_context(self, task_prompt: str) -> None:
+        try:
+            context = build_task_context(task_prompt, self.workspace)
+            plan = plan_minimal_edit(task_prompt, context)
+        except Exception:
+            return
+        self._add_many(self.state.candidate_files, context.candidate_files)
+        self._add_many(self.state.candidate_files, context.candidate_tests)
+        if context.prompt_paths:
+            self._add_many(self.state.candidate_files, context.prompt_paths)
+            self.state.localized = True
+        elif plan.planned_files:
+            self._add_many(self.state.candidate_files, plan.planned_files)
+        if context.verification_command:
+            self._add(self.state.verification_commands, context.verification_command)
+
+    def _update_repair_context(self, command: str, output: str) -> None:
+        try:
+            index = ProjectIndex.build(self.workspace)
+            failure = parse_failure_output(command, output)
+            context = build_repair_context(
+                failure,
+                self.state.modified_files,
+                self.state.planned_files,
+                index,
+            )
+            self.state.repair_context = context.to_json()
+        except Exception:
+            self.state.repair_context = {}
 
     def _block(self, reason: str, next_phase: TaskPhase, instruction: str) -> PhaseDecision:
         self._set_phase(next_phase, f"blocked: {reason}")

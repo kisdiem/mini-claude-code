@@ -16,6 +16,8 @@ from .runtime_types import FileChange, FinalDecision, GateDecision, PlanRecord, 
 from .task_state import PhaseDecision, TaskStateMachine
 from .tools import ToolResult
 from .verification_policy import VerificationPolicy
+from .project_index import ProjectIndex, render_json
+from .repair import build_repair_context, parse_failure_output
 
 
 @dataclass(frozen=True)
@@ -254,6 +256,17 @@ class TaskRuntime:
             self.task_state_machine.state if self.task_state_machine is not None else None,
             self.coding_loop.state if self.coding_loop is not None else None,
         )
+        repair_context: dict[str, Any] = {}
+        if self.task_state_machine is not None and self.task_state_machine.state.repair_context:
+            repair_context = dict(self.task_state_machine.state.repair_context)
+        else:
+            try:
+                index = ProjectIndex.build(self.workspace)
+                failure = parse_failure_output(command, summary)
+                planned = self.task_state_machine.state.planned_files if self.task_state_machine is not None else []
+                repair_context = build_repair_context(failure, modified, planned, index).to_json()
+            except Exception:
+                repair_context = {}
         return "\n".join(
             [
                 "Task phase: REPAIR.",
@@ -262,13 +275,16 @@ class TaskRuntime:
                 f"Exit code: {'n/a' if exit_code is None else exit_code}",
                 "Modified files: " + (", ".join(modified) if modified else "[unknown]"),
                 "",
+                "RepairContext:",
+                render_json(repair_context) if repair_context else "{}",
+                "",
                 "Last failure summary:",
                 summary[:1200] if summary else "[no failure output captured]",
                 "",
                 "Failure output excerpt:",
                 summary[:1200] if summary else "[no failure output captured]",
                 "",
-                "Next step: read the failure output, identify the smallest relevant cause, make one minimal repair, then rerun the same verification command.",
+                "Next step: read suggested_next_reads first, identify the smallest relevant cause, make one minimal repair, then rerun the same verification command.",
             ]
         )
 
