@@ -263,11 +263,13 @@ py -3 -m venv .venv
 .\.venv\Scripts\python -m pip install -r requirements.txt
 ```
 
-Set:
+Set values in `.env`. The CLI loads this file through `python-dotenv`; command
+line flags still override environment defaults.
 
 ```text
 ANTHROPIC_API_KEY=your_key
-CLAUDE_MODEL=claude-sonnet-4-6
+MINI_CC_MODEL=claude-sonnet-4-6
+MINI_CC_MAX_TOKENS=4096
 ```
 
 Run:
@@ -283,7 +285,8 @@ OpenAI provider:
 
 ```powershell
 $env:OPENAI_API_KEY = "your_key"
-py -3 -m mini_cc run --provider openai --model gpt-5 --s20 --permission-mode bypass --workspace . --output-format json --prompt "list files"
+$env:MINI_CC_OPENAI_MODEL = "gpt-5"
+py -3 -m mini_cc run --provider openai --s20 --permission-mode bypass --workspace . --output-format json --prompt "list files"
 ```
 
 ## CLI Modes

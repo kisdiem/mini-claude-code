@@ -8,7 +8,7 @@ import textwrap
 from pathlib import Path
 from typing import Callable
 
-from .agent import SYSTEM_PROMPT, Agent
+from .agent import Agent
 from .bench import (
     TerminalBenchShardRunner,
     benchmark_automation_to_json,
@@ -19,7 +19,7 @@ from .bench import (
     terminal_bench_real_run_to_json,
     write_benchmark_report,
 )
-from .config import DEFAULT_OPENAI_MODEL, build_config, load_env_file
+from .config import DEFAULT_PERMISSION, build_config, load_env_file
 from .coding_loop import CodingLoopPolicy
 from .governance import load_governance_config
 from .hooks import HookRuntime, load_configured_hooks
@@ -27,7 +27,7 @@ from .llm import AnthropicProvider, MockProvider, OpenAIProvider
 from .mcp_live import write_live_validation_report
 from .permission import PermissionPolicy
 from .session import SessionStore
-from .s20 import S20_SYSTEM_PROMPT, S20ToolRunner
+from .s20 import S20ToolRunner
 from .subagents import SubagentRuntime
 from .task_state import TaskStateMachine
 from .task_runtime import TaskRuntime
@@ -188,12 +188,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--provider",
         choices=["anthropic", "openai"],
-        default="anthropic",
         help="Real model provider to use when --mock is not set.",
     )
     parser.add_argument("--mock", action="store_true", help="Use deterministic mock provider.")
     parser.add_argument("--s20", action="store_true", help="Enable the comprehensive S20 toolset. Optional/experimental beyond the core evidence loop.")
-    parser.add_argument("--max-turns", type=int, default=8, help="Maximum model/tool loop turns.")
+    parser.add_argument("--max-turns", type=int, help="Maximum model/tool loop turns.")
     parser.add_argument("--coding-loop", action="store_true", help="Enable the evidence-first verification gate for code modification tasks.")
     parser.add_argument("--no-coding-loop", action="store_true", help="Disable Coding Task Success Loop, including the S20 default.")
     parser.add_argument("--test-command", help="Explicit verification command for Coding Task Success Loop.")
@@ -206,35 +205,30 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--max-nested-subagent-depth",
         type=int,
-        default=1,
         help="Maximum nested subagent delegation depth inside S20 subagents.",
     )
     parser.add_argument(
         "--nested-subagent-token-budget",
         type=int,
-        default=1200,
         help="Approximate token budget for each nested subagent prompt/task.",
     )
     parser.add_argument(
         "--conversation-compaction-token-budget",
         type=int,
-        default=6000,
         help="Approximate token budget before old model/tool turns are compacted.",
     )
     parser.add_argument(
         "--conversation-compaction-keep-recent",
         type=int,
-        default=6,
         help="Recent message count to preserve verbatim during conversation compaction.",
     )
     parser.add_argument(
         "--model-context-token-budget",
         type=int,
-        default=8000,
         help="Approximate end-to-end budget for system prompt, tool schemas, and messages sent to the model.",
     )
     parser.add_argument("--timeout", type=int, help="Harness timeout hint in seconds.")
-    parser.add_argument("--shell-timeout", type=int, default=30, help="Shell timeout in seconds.")
+    parser.add_argument("--shell-timeout", type=int, help="Shell timeout in seconds.")
     parser.add_argument(
         "--state-dir",
         default=".mini_cc",
@@ -259,7 +253,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--permission",
         choices=["ask", "auto", "read-only"],
-        default="ask",
         help="Permission mode for write_file, replace_text, and run_shell.",
     )
     args = parser.parse_args(argv)
@@ -268,7 +261,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def permission_mode(args: argparse.Namespace) -> str:
-    selected = args.permission_mode or args.permission
+    selected = args.permission_mode or args.permission or DEFAULT_PERMISSION
     if selected == "bypass":
         return "auto"
     return selected
@@ -493,12 +486,21 @@ def build_task_contract_hint(
 
 def build_agent(args: argparse.Namespace, output: Callable[[str], None] = print) -> Agent:
     load_env_file(Path(args.env_file))
-    shell_timeout = args.timeout or args.shell_timeout
+    shell_timeout = args.timeout if args.timeout is not None else args.shell_timeout
     config = build_config(
         workspace=args.workspace,
         permission=permission_mode(args),
         max_turns=args.max_turns,
         shell_timeout=shell_timeout,
+        provider=args.provider,
+        model=args.model,
+        base_url=args.base_url,
+        reasoning_effort=args.reasoning_effort,
+        nested_subagent_depth=args.max_nested_subagent_depth,
+        nested_subagent_token_budget=args.nested_subagent_token_budget,
+        compaction_token_budget=args.conversation_compaction_token_budget,
+        compaction_keep_recent_messages=args.conversation_compaction_keep_recent,
+        model_context_token_budget=args.model_context_token_budget,
     )
     governance = load_governance_config(config.workspace)
     permission_policy = PermissionPolicy.from_config(governance.merged.get("permission_policy"))
@@ -522,22 +524,23 @@ def build_agent(args: argparse.Namespace, output: Callable[[str], None] = print)
     def make_provider(model_override: str | None = None):
         if args.mock:
             return MockProvider()
-        if args.provider == "openai":
+        if config.provider == "openai":
             return OpenAIProvider(
                 api_key=config.openai_api_key,
-                model=model_override or args.model or DEFAULT_OPENAI_MODEL,
+                model=model_override or config.openai_model,
                 max_tokens=config.max_tokens,
-                base_url=args.base_url,
-                reasoning_effort=args.reasoning_effort or config.openai_reasoning_effort,
+                base_url=config.base_url,
+                reasoning_effort=config.openai_reasoning_effort,
             )
         return AnthropicProvider(
             api_key=config.api_key,
-            model=model_override or args.model or config.model,
+            model=model_override or config.model,
             max_tokens=config.max_tokens,
-            base_url=args.base_url,
+            base_url=config.base_url,
         )
 
     provider = make_provider()
+    selected_model = config.openai_model if config.provider == "openai" else config.model
     coding_loop_enabled = (args.coding_loop or args.require_verification or args.s20) and not args.no_coding_loop
     coding_loop = (
         CodingLoopPolicy(
@@ -561,7 +564,7 @@ def build_agent(args: argparse.Namespace, output: Callable[[str], None] = print)
         coding_loop=coding_loop,
     )
     system_prompt = system_prompt_for_workspace(
-        S20_SYSTEM_PROMPT if args.s20 else SYSTEM_PROMPT,
+        config.s20_system_prompt if args.s20 else config.system_prompt,
         config.workspace,
         tools.hooks if args.s20 else None,
     )
@@ -572,11 +575,11 @@ def build_agent(args: argparse.Namespace, output: Callable[[str], None] = print)
                 base_tools=tools,
                 provider_factory=lambda spec: make_provider(spec.model),
                 planning_provider=make_provider(),
-                max_nested_depth=args.max_nested_subagent_depth,
-                nested_token_budget=args.nested_subagent_token_budget,
-                compaction_token_budget=args.conversation_compaction_token_budget,
-                compaction_keep_recent_messages=args.conversation_compaction_keep_recent,
-                model_context_token_budget=args.model_context_token_budget,
+                max_nested_depth=config.nested_subagent_depth,
+                nested_token_budget=config.nested_subagent_token_budget,
+                compaction_token_budget=config.compaction_token_budget,
+                compaction_keep_recent_messages=config.compaction_keep_recent_messages,
+                model_context_token_budget=config.model_context_token_budget,
                 state_dir=None if state_dir is None else state_dir / "subagents",
             )
         )
@@ -588,11 +591,11 @@ def build_agent(args: argparse.Namespace, output: Callable[[str], None] = print)
             output=output,
             session_store=SessionStore(None if state_dir is None else state_dir / "sessions"),
             hook_runtime=tools.hooks,
-            model_name=args.model,
+            model_name=selected_model,
             workflow=StructuredWorkflow(planner=ModelAuthoredPlanner(make_provider())),
-            compaction_token_budget=args.conversation_compaction_token_budget,
-            compaction_keep_recent_messages=args.conversation_compaction_keep_recent,
-            model_context_token_budget=args.model_context_token_budget,
+            compaction_token_budget=config.compaction_token_budget,
+            compaction_keep_recent_messages=config.compaction_keep_recent_messages,
+            model_context_token_budget=config.model_context_token_budget,
             coding_loop=coding_loop,
             task_state_machine=task_state_machine,
             task_runtime=task_runtime,
@@ -603,9 +606,9 @@ def build_agent(args: argparse.Namespace, output: Callable[[str], None] = print)
         max_turns=config.max_turns,
         system_prompt=system_prompt,
         output=output,
-        compaction_token_budget=args.conversation_compaction_token_budget,
-        compaction_keep_recent_messages=args.conversation_compaction_keep_recent,
-        model_context_token_budget=args.model_context_token_budget,
+        compaction_token_budget=config.compaction_token_budget,
+        compaction_keep_recent_messages=config.compaction_keep_recent_messages,
+        model_context_token_budget=config.model_context_token_budget,
         coding_loop=coding_loop,
         task_state_machine=task_state_machine,
         task_runtime=task_runtime,

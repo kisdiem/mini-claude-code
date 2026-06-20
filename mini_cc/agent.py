@@ -4,6 +4,13 @@ import time
 from typing import Any, Callable
 
 from .coding_loop import CodingLoopPolicy, parse_exit_code
+from .config import (
+    DEFAULT_COMPACTION_KEEP_RECENT_MESSAGES,
+    DEFAULT_COMPACTION_TOKEN_BUDGET,
+    DEFAULT_MAX_TURNS,
+    DEFAULT_MODEL_CONTEXT_TOKEN_BUDGET,
+    DEFAULT_SYSTEM_PROMPT,
+)
 from .hooks import HookRuntime
 from .llm import Provider
 from .session import AgentSession, SessionStore
@@ -13,21 +20,7 @@ from .tools import ToolResult, ToolRunner
 from .workflow import ExecutionRecord, StructuredWorkflow, TaskPlan
 
 
-SYSTEM_PROMPT = """You are Mini Claude Code, a local coding assistant.
-
-Work like a careful coding agent:
-- Inspect the workspace before changing files.
-- Use tools for file reads, searches, edits, and commands.
-- Prefer apply_patch for code edits when exact string replacement is fragile.
-- Keep edits minimal and explain important tradeoffs.
-- Never claim a command or edit succeeded unless a tool result confirms it.
-- For coding tasks, follow phases: INTAKE, EXPLORE, LOCALIZE, PLAN, EDIT, VERIFY, REPAIR, FINAL.
-- Explore and localize before editing. Do not modify a file before reading it.
-- Produce a minimal edit plan with planned_files before changing files.
-- For code modification tasks, run a real verification command after editing; git_status, git_diff, context_snapshot, list_files, read_file, and search_text are not verification.
-- If verification fails, analyze the failure output before making one minimal repair.
-- If a task needs writes or shell commands, ask through the available tools and obey permission denials.
-"""
+SYSTEM_PROMPT = DEFAULT_SYSTEM_PROMPT
 
 
 def _block_to_dict(block: Any) -> dict[str, Any]:
@@ -55,16 +48,16 @@ class Agent:
         provider: Provider,
         tools: ToolRunner,
         *,
-        max_turns: int = 8,
+        max_turns: int = DEFAULT_MAX_TURNS,
         system_prompt: str = SYSTEM_PROMPT,
         output: Callable[[str], None] = print,
         session_store: SessionStore | None = None,
         hook_runtime: HookRuntime | None = None,
         model_name: str | None = None,
         workflow: StructuredWorkflow | None = None,
-        compaction_token_budget: int = 6000,
-        compaction_keep_recent_messages: int = 6,
-        model_context_token_budget: int = 8000,
+        compaction_token_budget: int = DEFAULT_COMPACTION_TOKEN_BUDGET,
+        compaction_keep_recent_messages: int = DEFAULT_COMPACTION_KEEP_RECENT_MESSAGES,
+        model_context_token_budget: int = DEFAULT_MODEL_CONTEXT_TOKEN_BUDGET,
         coding_loop: CodingLoopPolicy | None = None,
         task_state_machine: TaskStateMachine | None = None,
         task_runtime: TaskRuntime | None = None,

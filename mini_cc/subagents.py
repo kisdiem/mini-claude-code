@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .agent import Agent
+from .config import subagent_system_prompt
 from .hooks import HookRuntime, load_hooks_file
 from .llm import Provider
 from .mcp import (
@@ -4852,7 +4853,7 @@ def default_subagents() -> list[SubagentSpec]:
         SubagentSpec(
             name="explorer",
             description="Read-only fact gathering over files, search, git, context, and memory.",
-            system_prompt="You are a read-only exploration subagent. Gather facts and cite tool observations.",
+            system_prompt=subagent_system_prompt("explorer"),
             allowed_tools={
                 "list_files",
                 "read_file",
@@ -4873,7 +4874,7 @@ def default_subagents() -> list[SubagentSpec]:
         SubagentSpec(
             name="implementer",
             description="Scoped implementation subagent with workspace write access.",
-            system_prompt="You are an implementation subagent. Make focused edits only after inspecting target files.",
+            system_prompt=subagent_system_prompt("implementer"),
             allowed_tools={
                 "list_files",
                 "read_file",
@@ -4892,7 +4893,7 @@ def default_subagents() -> list[SubagentSpec]:
         SubagentSpec(
             name="verifier",
             description="Verification subagent for tests, shell checks, git status, and diffs.",
-            system_prompt="You are a verification subagent. Run targeted checks and classify failures.",
+            system_prompt=subagent_system_prompt("verifier"),
             allowed_tools={"list_files", "read_file", "search_text", "run_shell", "git_status", "git_diff", "subagent_memory_read"},
             capabilities={"verify", "test", "shell"},
             max_turns=4,
@@ -4900,7 +4901,7 @@ def default_subagents() -> list[SubagentSpec]:
         SubagentSpec(
             name="critic",
             description="Review subagent that looks for overfitting, missed constraints, and regression risk.",
-            system_prompt="You are a critical review subagent. Prefer concrete risks over general advice.",
+            system_prompt=subagent_system_prompt("critic"),
             allowed_tools={"list_files", "read_file", "search_text", "git_status", "git_diff", "context_snapshot", "subagent_memory_read"},
             capabilities={"review", "critic", "read"},
             max_turns=4,
@@ -4908,7 +4909,7 @@ def default_subagents() -> list[SubagentSpec]:
         SubagentSpec(
             name="bench-diagnoser",
             description="Benchmark diagnostics subagent for manifests, results, and environment failures.",
-            system_prompt="You are a benchmark diagnostics subagent. Separate model failures from environment failures.",
+            system_prompt=subagent_system_prompt("bench-diagnoser"),
             allowed_tools={
                 "list_files",
                 "read_file",

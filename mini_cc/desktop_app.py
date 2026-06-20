@@ -14,6 +14,7 @@ from tkinter import filedialog, ttk
 from typing import Any
 
 from . import __version__
+from .config import desktop_model_choices
 
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -518,7 +519,7 @@ class MiniCCDesktopApp(TkBase):
             body,
             "Model",
             self.vars["model"],
-            ["", "gpt-5.5", "gpt-5", "gpt-4.1", "claude-sonnet-4-6"],
+            desktop_model_choices(),
             readonly=False,
         )
         self.dialog_combo(body, "Reasoning", self.vars["reasoning"], ["", "low", "medium", "high", "xhigh"], readonly=True)
