@@ -299,6 +299,12 @@ class CodingLoopPolicy:
         return self.finish_decision().status
 
     def write_artifact(self, status: str | None = None) -> Path | None:
+        """Write the legacy coding-loop artifact.
+
+        TaskRuntime is the preferred Evidence Report writer. This method remains
+        for backwards compatibility with older eval helpers and direct policy
+        tests.
+        """
         if not self.enabled:
             return None
         target = self.workspace / ".mini_cc" / "task-success" / "last-run.json"
