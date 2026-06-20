@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Any, Protocol
+from urllib.parse import urlparse, urlunparse
 
 
 class Provider(Protocol):
@@ -64,6 +65,7 @@ class OpenAIProvider:
         max_tokens: int,
         base_url: str | None = None,
         reasoning_effort: str | None = None,
+        api_mode: str = "auto",
     ) -> None:
         try:
             from openai import OpenAI
@@ -75,10 +77,12 @@ class OpenAIProvider:
         if not api_key:
             raise RuntimeError("OPENAI_API_KEY is not set.")
 
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
+        self.base_url = normalize_openai_base_url(base_url)
+        self.client = OpenAI(api_key=api_key, base_url=self.base_url)
         self.model = model
         self.max_tokens = max_tokens
         self.reasoning_effort = reasoning_effort
+        self.api_mode = normalize_openai_api_mode(api_mode)
 
     def complete(
         self,
@@ -86,8 +90,11 @@ class OpenAIProvider:
         tools: list[dict[str, Any]],
         system: str,
     ) -> Any:
-        input_payload: Any = self.messages_to_responses_input(messages)
+        if self._prefer_chat_completions():
+            response = self.client.chat.completions.create(**self._chat_request(messages, tools, system))
+            return self._chat_to_blocks(response)
 
+        input_payload: Any = self.messages_to_responses_input(messages)
         request: dict[str, Any] = {
             "model": self.model,
             "instructions": system,
@@ -98,8 +105,14 @@ class OpenAIProvider:
         }
         if self.reasoning_effort:
             request["reasoning"] = {"effort": self.reasoning_effort}
-        response = self.client.responses.create(**request)
-        return self._to_blocks(response)
+        try:
+            response = self.client.responses.create(**request)
+            return self._to_blocks(response)
+        except Exception as exc:
+            if not self._should_fallback_to_chat(exc):
+                raise
+            response = self.client.chat.completions.create(**self._chat_request(messages, tools, system))
+            return self._chat_to_blocks(response)
 
     @staticmethod
     def messages_to_responses_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -150,6 +163,93 @@ class OpenAIProvider:
             "parameters": tool.get("input_schema", {"type": "object", "properties": {}}),
         }
 
+    def _chat_tool_schema(self, tool: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": tool["name"],
+                "description": tool.get("description", ""),
+                "parameters": tool.get("input_schema", {"type": "object", "properties": {}}),
+            },
+        }
+
+    def _chat_request(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]], system: str) -> dict[str, Any]:
+        request: dict[str, Any] = {
+            "model": self.model,
+            "messages": [{"role": "system", "content": system}, *self.messages_to_chat_messages(messages)],
+            "tools": [self._chat_tool_schema(tool) for tool in tools],
+            "max_tokens": self.max_tokens,
+        }
+        if not request["tools"]:
+            request.pop("tools")
+        return request
+
+    @staticmethod
+    def messages_to_chat_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        chat_messages: list[dict[str, Any]] = []
+        for message in messages:
+            role = str(message.get("role", "user"))
+            content = message.get("content", "")
+            if isinstance(content, str):
+                chat_messages.append({"role": role, "content": content})
+                continue
+            if role == "assistant" and isinstance(content, list):
+                text_parts: list[str] = []
+                tool_calls: list[dict[str, Any]] = []
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    if block.get("type") == "text" and block.get("text"):
+                        text_parts.append(str(block.get("text", "")))
+                    elif block.get("type") == "tool_use":
+                        tool_calls.append(
+                            {
+                                "id": str(block.get("id", "")),
+                                "type": "function",
+                                "function": {
+                                    "name": str(block.get("name", "")),
+                                    "arguments": json.dumps(block.get("input") or {}, ensure_ascii=False),
+                                },
+                            }
+                        )
+                payload: dict[str, Any] = {"role": "assistant", "content": "\n".join(text_parts) or None}
+                if tool_calls:
+                    payload["tool_calls"] = tool_calls
+                chat_messages.append(payload)
+                continue
+            if role == "user" and isinstance(content, list):
+                for block in content:
+                    if not isinstance(block, dict) or block.get("type") != "tool_result":
+                        continue
+                    chat_messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": str(block.get("tool_use_id", "")),
+                            "content": str(block.get("content", "")),
+                        }
+                    )
+                continue
+            chat_messages.append({"role": role, "content": str(content)})
+        return chat_messages
+
+    def _should_fallback_to_chat(self, exc: Exception) -> bool:
+        api_mode = getattr(self, "api_mode", "auto")
+        if api_mode == "responses":
+            return False
+        status_code = getattr(exc, "status_code", None)
+        if status_code in {404, 405, 501, 503}:
+            return True
+        text = str(exc).lower()
+        return any(token in text for token in ["responses", "not found", "not supported", "unsupported", "service temporarily unavailable"])
+
+    def _prefer_chat_completions(self) -> bool:
+        api_mode = getattr(self, "api_mode", "auto")
+        if api_mode == "chat":
+            return True
+        if api_mode == "responses":
+            return False
+        return is_custom_openai_base_url(getattr(self, "base_url", None))
+
     def _to_blocks(self, response: Any) -> "MockResponse":
         blocks: list[MockBlock] = []
         output_text = getattr(response, "output_text", None)
@@ -188,6 +288,62 @@ class OpenAIProvider:
             if text:
                 parts.append(str(text))
         return "\n".join(parts)
+
+    def _chat_to_blocks(self, response: Any) -> "MockResponse":
+        choices = getattr(response, "choices", []) or []
+        if not choices:
+            return MockResponse([MockBlock(type="text", text="OpenAI chat fallback returned no choices.")])
+        message = getattr(choices[0], "message", None)
+        if message is None:
+            return MockResponse([MockBlock(type="text", text="OpenAI chat fallback returned no message.")])
+        blocks: list[MockBlock] = []
+        content = getattr(message, "content", None)
+        if content:
+            blocks.append(MockBlock(type="text", text=str(content)))
+        for tool_call in getattr(message, "tool_calls", []) or []:
+            function = getattr(tool_call, "function", None)
+            arguments = getattr(function, "arguments", "{}") if function is not None else "{}"
+            try:
+                parsed_args = json.loads(arguments or "{}")
+            except json.JSONDecodeError:
+                parsed_args = {}
+            blocks.append(
+                MockBlock(
+                    type="tool_use",
+                    id=getattr(tool_call, "id", ""),
+                    name=getattr(function, "name", "") if function is not None else "",
+                    input=parsed_args,
+                )
+            )
+        if not blocks:
+            blocks.append(MockBlock(type="text", text="OpenAI chat fallback returned no output."))
+        return MockResponse(blocks)
+
+
+def normalize_openai_base_url(base_url: str | None) -> str | None:
+    if not base_url:
+        return None
+    parsed = urlparse(base_url)
+    if not parsed.scheme or not parsed.netloc:
+        return base_url
+    path = parsed.path.rstrip("/")
+    if path:
+        return base_url.rstrip("/")
+    return urlunparse((parsed.scheme, parsed.netloc, "/v1", "", "", ""))
+
+
+def normalize_openai_api_mode(value: str | None) -> str:
+    mode = (value or "auto").strip().lower()
+    if mode not in {"auto", "responses", "chat"}:
+        return "auto"
+    return mode
+
+
+def is_custom_openai_base_url(base_url: str | None) -> bool:
+    if not base_url:
+        return False
+    parsed = urlparse(base_url)
+    return bool(parsed.netloc and parsed.netloc.lower() != "api.openai.com")
 
 
 @dataclass

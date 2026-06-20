@@ -186,6 +186,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Optional OpenAI Responses reasoning effort, for example high or xhigh.",
     )
     parser.add_argument(
+        "--openai-api-mode",
+        choices=["auto", "responses", "chat"],
+        help="OpenAI API mode. auto uses Responses for api.openai.com and Chat Completions for custom base URLs.",
+    )
+    parser.add_argument(
         "--provider",
         choices=["anthropic", "openai"],
         help="Real model provider to use when --mock is not set.",
@@ -496,6 +501,7 @@ def build_agent(args: argparse.Namespace, output: Callable[[str], None] = print)
         model=args.model,
         base_url=args.base_url,
         reasoning_effort=args.reasoning_effort,
+        openai_api_mode=args.openai_api_mode,
         nested_subagent_depth=args.max_nested_subagent_depth,
         nested_subagent_token_budget=args.nested_subagent_token_budget,
         compaction_token_budget=args.conversation_compaction_token_budget,
@@ -531,6 +537,7 @@ def build_agent(args: argparse.Namespace, output: Callable[[str], None] = print)
                 max_tokens=config.max_tokens,
                 base_url=config.base_url,
                 reasoning_effort=config.openai_reasoning_effort,
+                api_mode=config.openai_api_mode,
             )
         return AnthropicProvider(
             api_key=config.api_key,

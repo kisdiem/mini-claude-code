@@ -23,6 +23,7 @@ class ConfigTests(unittest.TestCase):
                         "MINI_CC_MAX_TURNS=5",
                         "MINI_CC_SHELL_TIMEOUT=17",
                         "MINI_CC_PERMISSION=auto",
+                        "MINI_CC_OPENAI_API_MODE=chat",
                         "MINI_CC_SYSTEM_PROMPT=custom system",
                         "MINI_CC_S20_SYSTEM_PROMPT=custom s20",
                         "OPENAI_API_KEY=sk-test",
@@ -42,6 +43,7 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.max_turns, 5)
             self.assertEqual(config.shell_timeout, 17)
             self.assertEqual(config.permission, "auto")
+            self.assertEqual(config.openai_api_mode, "chat")
             self.assertEqual(config.system_prompt, "custom system")
             self.assertEqual(config.s20_system_prompt, "custom s20")
             self.assertEqual(config.openai_api_key, "sk-test")
@@ -54,6 +56,7 @@ class ConfigTests(unittest.TestCase):
                     "MINI_CC_MODEL": "env-model",
                     "MINI_CC_MAX_TURNS": "4",
                     "MINI_CC_SHELL_TIMEOUT": "11",
+                    "MINI_CC_OPENAI_API_MODE": "responses",
                 },
                 clear=True,
             ):
@@ -62,11 +65,13 @@ class ConfigTests(unittest.TestCase):
                     model="cli-model",
                     max_turns=9,
                     shell_timeout=22,
+                    openai_api_mode="chat",
                 )
 
             self.assertEqual(config.model, "cli-model")
             self.assertEqual(config.max_turns, 9)
             self.assertEqual(config.shell_timeout, 22)
+            self.assertEqual(config.openai_api_mode, "chat")
 
     def test_defaults_remain_compatible_without_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -77,6 +82,7 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.provider, "anthropic")
             self.assertEqual(config.max_tokens, 4096)
             self.assertEqual(config.max_turns, 8)
+            self.assertEqual(config.openai_api_mode, "auto")
 
 
 if __name__ == "__main__":

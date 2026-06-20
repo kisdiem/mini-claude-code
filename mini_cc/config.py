@@ -107,6 +107,7 @@ class AppConfig:
     openai_api_key: str | None
     base_url: str | None
     openai_reasoning_effort: str | None
+    openai_api_mode: str
     system_prompt: str
     s20_system_prompt: str
     nested_subagent_depth: int
@@ -127,6 +128,7 @@ def build_config(
     openai_model: str | None = None,
     base_url: str | None = None,
     reasoning_effort: str | None = None,
+    openai_api_mode: str | None = None,
     nested_subagent_depth: int | None = None,
     nested_subagent_token_budget: int | None = None,
     compaction_token_budget: int | None = None,
@@ -147,6 +149,7 @@ def build_config(
         openai_api_key=_env_optional("OPENAI_API_KEY"),
         base_url=base_url or _env_optional("MINI_CC_BASE_URL") or _env_optional("ANTHROPIC_BASE_URL"),
         openai_reasoning_effort=reasoning_effort or _env_optional("OPENAI_REASONING_EFFORT"),
+        openai_api_mode=openai_api_mode or _env_optional("MINI_CC_OPENAI_API_MODE") or "auto",
         system_prompt=_prompt_from_env("MINI_CC_SYSTEM_PROMPT", "MINI_CC_SYSTEM_PROMPT_FILE", DEFAULT_SYSTEM_PROMPT),
         s20_system_prompt=_prompt_from_env("MINI_CC_S20_SYSTEM_PROMPT", "MINI_CC_S20_SYSTEM_PROMPT_FILE", DEFAULT_S20_SYSTEM_PROMPT),
         nested_subagent_depth=(
