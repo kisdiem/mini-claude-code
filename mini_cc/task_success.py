@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .coding_loop import is_verification_command, parse_exit_code
+from .verification_policy import VerificationPolicy
 
 
 PATH_RE = re.compile(
@@ -26,6 +26,7 @@ TEST_COMMAND_RE = re.compile(
     r"|\b((?:ruff|mypy|tsc|cargo\s+(?:test|check)|go\s+test|mvn\s+test|gradle\s+test|\.\/gradlew\s+test|make\s+(?:test|check)|markdownlint|mkdocs|sphinx-build)[^\n.;`]*)",
     re.IGNORECASE,
 )
+_VERIFICATION_POLICY = VerificationPolicy()
 
 CANONICAL_INTENTS = {
     "bug_fix",
@@ -488,12 +489,11 @@ def validate_verification_command(
     workspace: Path | None = None,
 ) -> VerificationEvidence:
     normalized = normalize_command(command)
-    command_type = classify_verification_command(command)
-    fake_prefixes = ("echo", "cat", "ls", "dir", "pwd", "grep", "find", "git status", "git diff")
-    if any(normalized == item or normalized.startswith(item + " ") for item in fake_prefixes):
+    command_type = _VERIFICATION_POLICY.classify_command(command)
+    if command_type in {"fake", "runtime-evidence"}:
         return verification_block(command, command_type, "command is runtime evidence or shell inspection, not code verification")
 
-    real = is_semantic_verification_command(command)
+    real = _VERIFICATION_POLICY.is_real_verification(command)
     if not real:
         return verification_block(command, command_type, "command is not a real test/lint/typecheck/build/docs verification command")
 
@@ -540,33 +540,16 @@ def validate_verification_command(
 
 
 def validate_verification_output(command: str, output: str, *, prior: VerificationEvidence | None = None) -> VerificationEvidence:
-    exit_code = parse_exit_code(output)
-    command_type = prior.command_type if prior is not None else classify_verification_command(command)
-    real = prior.is_real_verification if prior is not None else is_semantic_verification_command(command)
+    evaluated = _VERIFICATION_POLICY.evaluate_command(command, output)
+    exit_code = evaluated.exit_code
+    command_type = prior.command_type if prior is not None else evaluated.command_type
+    real = prior.is_real_verification if prior is not None else evaluated.is_real_verification
     relevant = prior.is_relevant if prior is not None else real
     relevance_reason = prior.relevance_reason if prior is not None else ("real verification command" if real else "not a real verification command")
     warnings = list(prior.warnings if prior is not None else [])
     blockers = list(prior.blockers if prior is not None else [])
     evidence = list(prior.evidence if prior is not None else [])
-    lowered = output.lower()
-    no_checks_patterns = [
-        r"\bcollected\s+0\s+items\b",
-        r"\bno\s+tests?\s+ran\b",
-        r"\bran\s+0\s+tests?\b",
-        r"\b0\s+tests?\s+(?:run|ran|collected|passed|failed|skipped|executed)\b",
-        r"\bempty\s+suite\b",
-        r"\bno\s+tests?\s+found\b",
-        r"\bpasswithnotests\b",
-        r"\bno\s+test\s+files?\s+found\b",
-        r"\bno\s+matching\s+files\b",
-        r"\bnot\s+configured\b",
-        r"\bmissing\s+script\b",
-        r"\bcommand\s+not\s+found\b",
-        r"\bnot recognized as (?:an internal|a cmdlet|a command)\b",
-        r"\bskipped\s+because\b",
-        r"\bnothing\s+to\s+(?:check|test|lint|build)\b",
-    ]
-    has_no_checks = any(re.search(pattern, lowered) for pattern in no_checks_patterns)
+    has_no_checks = not evaluated.has_meaningful_checks and exit_code == 0
     if exit_code != 0:
         blockers.append("verification command failed")
         return VerificationEvidence(
@@ -864,30 +847,11 @@ def expected_verification_types(contract: TaskContract, modified_files: list[str
 
 
 def is_semantic_verification_command(command: str) -> bool:
-    if is_verification_command(command):
-        return True
-    normalized = normalize_command(command)
-    return any(
-        normalized == prefix or normalized.startswith(prefix + " ")
-        for prefix in ["markdownlint", "mkdocs", "sphinx-build", "npm run build", "pnpm run build", "yarn build", "yarn run build"]
-    )
+    return _VERIFICATION_POLICY.is_real_verification(command)
 
 
 def classify_verification_command(command: str) -> str:
-    normalized = normalize_command(command)
-    if any(token in normalized for token in ["pytest", "unittest", "npm test", "pnpm test", "yarn test", "cargo test", "go test", "mvn test", "gradle test", "make test"]):
-        return "test"
-    if any(token in normalized for token in ["markdownlint", "mkdocs", "sphinx-build"]):
-        return "docs/check"
-    if any(token in normalized for token in ["ruff", "lint", "eslint"]):
-        return "lint"
-    if any(token in normalized for token in ["mypy", "tsc", "cargo check"]):
-        return "typecheck"
-    if any(token in normalized for token in ["build", "make check"]):
-        return "build"
-    if any(token in normalized for token in ["python ", "node ", "py "]):
-        return "run/smoke"
-    return "unknown"
+    return _VERIFICATION_POLICY.classify_command(command)
 
 
 def verification_block(command: str, command_type: str, reason: str) -> VerificationEvidence:

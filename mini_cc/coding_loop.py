@@ -9,6 +9,7 @@ from typing import Any
 
 from .tools import ToolResult
 from .verification import best_verification_command
+from .verification_policy import VerificationPolicy
 
 
 CODING_TASK_TOKENS = {
@@ -89,6 +90,8 @@ VERIFICATION_PREFIXES = {
     ".\\gradlew test",
     "./gradlew test",
 }
+
+_VERIFICATION_POLICY = VerificationPolicy()
 
 
 @dataclass
@@ -332,20 +335,18 @@ def is_likely_code_task(prompt: str) -> bool:
 
 
 def is_verification_command(command: str) -> bool:
-    normalized = normalize_command(command)
-    if not normalized:
-        return False
-    return any(normalized == prefix or normalized.startswith(prefix + " ") or f" {prefix} " in f" {normalized} " for prefix in VERIFICATION_PREFIXES)
+    return _VERIFICATION_POLICY.is_real_verification(command)
 
 
 def parse_verification_result(command: str, result: ToolResult) -> VerificationCommand:
-    exit_code = parse_exit_code(result.content)
+    evaluated = _VERIFICATION_POLICY.evaluate_command(command, result.content)
+    exit_code = evaluated.exit_code
     stdout = extract_section(result.content, "stdout:", "stderr:")
     stderr = extract_section(result.content, "stderr:", None)
     return VerificationCommand(
         command=command,
         exit_code=exit_code,
-        passed=(exit_code == 0 and not result.is_error),
+        passed=(evaluated.passed and not result.is_error),
         stdout_excerpt=clip_excerpt(stdout),
         stderr_excerpt=clip_excerpt(stderr),
     )

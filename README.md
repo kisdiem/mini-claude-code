@@ -431,7 +431,7 @@ This is a small local smoke validation. It is not an external benchmark score.
 ## Documentation
 
 - [Evidence-First Runtime](docs/evidence_first_runtime.md)
-- [Runtime Architecture](docs/architecture.md)
+- [Core Runtime Architecture](docs/core_runtime_architecture.md)
 - [Coding Reliability Loop](docs/coding_reliability_loop.md)
 - [Interview Summary](docs/interview_summary.md)
 
