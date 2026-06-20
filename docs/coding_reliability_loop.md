@@ -103,34 +103,45 @@ evidence ledger, but it cannot set task success to passed.
 ## Semantic Task Success Layer
 
 `TaskStateMachine` enforces the process phases. `mini_cc.task_success` adds a
-small deterministic evidence layer that checks whether those phases produced
-relevant evidence.
+deterministic evidence-based validation layer that checks whether those phases
+produced relevant evidence. It is not an LLM judge and does not call an external
+model.
 
-The semantic layer extracts a `TaskContract` from the raw user prompt:
+The semantic layer extracts a `TaskContract` from the raw user prompt. The
+contract keeps backward-compatible fields and also records structured evidence:
 
 - task type, such as bug fix, feature addition, refactor, documentation, or
   config/build;
 - explicit file paths and symbols;
-- requested operations;
+- requested operations and primary/secondary intents;
 - constraints such as only modifying one file, avoiding tests, preserving API
-  compatibility, or avoiding broad refactors;
-- acceptance keywords from paths, symbols, quoted strings, and failure words.
+  compatibility, avoiding broad refactors, or avoiding new files;
+- acceptance criteria from paths, symbols, quoted literals, expected/actual
+  phrases, error snippets, and explicit verification commands;
+- evidence items with source, kind, confidence, and reason;
+- an ambiguity score that tells the runtime when more exploration is needed.
 
 It then validates:
 
 - plan relevance: `planned_files` must be grounded in prompt paths, explored
-  candidate files, or files that were read;
-- edit relevance: modified files must stay inside `planned_files` and respect
-  user constraints;
+  candidate files, files that were read, or failure-output evidence;
+- edit relevance: modified files must stay inside `planned_files` unless a
+  clearly task-required new file is allowed;
+- hard blockers: explicit constraints such as `only modify`, `do not modify
+  tests`, and `no new files` block the task when violated;
+- warnings: broad but plausible edits, over-large diffs, and public API risk are
+  recorded without always blocking;
+- low-confidence localization: ambiguous tasks without prompt paths, candidates,
+  or read files are sent back to `search_text`, `list_files`, and `read_file`;
 - verification relevance: the command must be a real test/lint/typecheck/build
-  check and match the modified file type or task type;
+  or docs-check command and match the modified file type or task type;
 - verification output quality: a zero-exit command with `collected 0 items`,
   `no tests ran`, `Ran 0 tests`, `No tests found`, or similar output does not
   count as meaningful verification.
 
-This layer is intentionally heuristic and offline. It is designed to catch
-obvious false positives, not to prove semantic correctness for every possible
-program.
+This layer is intentionally deterministic and offline. It improves auditability
+and catches obvious false positives, but it does not prove global program
+correctness for every possible repository.
 
 ## Test Command Discovery
 

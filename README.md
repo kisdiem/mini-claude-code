@@ -1,79 +1,106 @@
 # Mini Claude Code
 
-Mini Claude Code is a teaching and research-oriented local coding agent runtime
-inspired by Claude Code. It explores how a coding agent can move beyond a basic
-model-tool loop by adding workspace tools, permission control, hook events,
-context handling, staged task execution, verification gates, and deterministic
-task-success evidence.
+Mini Claude Code is an evidence-first local coding-agent runtime.
 
-The project is intended for learning, experimentation, and engineering review.
-It is not a claim of product parity with Claude Code and does not present
-external benchmark scores as proof of autonomous coding performance.
+It makes every coding-agent step auditable and prevents unverified code edits
+from being reported as successful.
 
 For a concise project overview, see [Interview Summary](docs/interview_summary.md).
 
-![Mini Claude Code desktop screenshot](docs/images/desktop-app.png)
-
 ## Project Scope
 
-This repository is an implementation study of a local coding-agent runtime. It
-focuses on the engineering pieces around an LLM: tool schemas, workspace file
-operations, shell execution, permission policies, hooks, task state, context
-snapshots, verification, and task-success reporting.
+Mini Claude Code is:
 
-It is not intended to claim feature parity with Claude Code or any commercial
-coding agent. The repository should be read as a compact engineering prototype
-that demonstrates how coding-agent reliability mechanisms can be built and
-tested locally.
+- a compact runtime for studying coding-agent reliability;
+- a local harness around LLM tool use;
+- a process-control layer for exploration, planning, editing, verification,
+  repair, and evidence reporting.
 
-The main goal is to make the runtime inspectable: a reviewer should be able to
-see what the agent planned, which tools it called, what it changed, what it
-verified, and what evidence was recorded.
+Mini Claude Code is not:
 
-## Key Capabilities
+- a Claude Code replacement;
+- a benchmark claim;
+- a general autonomous software engineer;
+- a collection of unrelated agent features.
+
+The project is organized around a single reliability loop:
+
+```text
+User Task
+   |
+   v
+Explore Workspace
+   |
+   v
+Localize Target Files
+   |
+   v
+Produce Planned Files
+   |
+   v
+Apply Permission-Gated Edits
+   |
+   v
+Run Real Verification
+   |
+   v
+Repair If Needed
+   |
+   v
+Write Evidence Report
+```
+
+## Evidence-First Loop
+
+The runtime separates three questions:
+
+1. Did the agent follow the required process?
+2. Are the plan, edit, and verification relevant to the user task?
+3. Did real local verification pass?
+
+`TaskStateMachine` answers the first question by enforcing staged execution.
+`mini_cc.task_success` answers the second question through deterministic
+evidence-based checks. `CodingLoopPolicy` answers the third question by blocking
+successful final reports after code edits until a real verification command has
+run.
+
+This does not prove global coding ability. It makes the runtime inspectable: a
+reviewer can see what the agent inspected, planned, changed, verified, and
+reported.
+
+## Core Runtime
 
 - Agent loop with Anthropic, OpenAI, and deterministic mock providers.
-- Workspace tools for listing, reading, searching, patching, writing, and
-  running commands.
-- Permission policies around risky operations such as workspace writes, shell
-  commands, network access, Docker commands, and package managers.
-- Hook events for prompt submission, tool use, permission decisions, file
-  changes, session lifecycle, and context compaction.
-- S20 comprehensive mode with todo state, local memory, skills, git evidence,
-  context snapshots, and subagent-related tools.
-- `apply_patch` support for workspace-safe unified diff edits.
-- Coding Task Success Loop that requires real verification after code edits.
-- Staged Task State Machine enforcing:
+- Tool schemas for workspace file operations and shell commands.
+- Permission policy around risky operations.
+- `TaskStateMachine` for explore -> localize -> plan -> edit -> verify ->
+  repair -> final process control.
+- `CodingLoopPolicy` for real verification after code edits.
+- Semantic task-success checks for plan, edit, verification relevance, and
+  output quality.
+- Verification command discovery for local projects.
+- Evidence Report artifact for each core coding run.
 
-  ```text
-  INTAKE -> EXPLORE -> LOCALIZE -> PLAN -> EDIT -> VERIFY -> REPAIR -> FINAL
-  ```
+## Optional Extensions
 
-- Semantic Task Success Checks that validate plan relevance, edit relevance,
-  verification relevance, and verification output quality.
-- Local task-success artifacts for debugging and review.
-- Desktop UI and a lightweight local web frontend for demo and manual testing.
+These features support the same evidence-first runtime, but they are not the
+main value proposition:
 
-These capabilities are implemented as local runtime mechanisms. They are meant
-to support study and review, not to guarantee task completion across arbitrary
-software projects.
+- hooks for prompt, tool, permission, file, session, and context events;
+- local memory, skills, todo state, git evidence tools, and context snapshots;
+- desktop UI and web frontend as manual demo surfaces;
+- local health checks and deterministic smoke evals.
 
-## Reliability Model
+## Experimental Features
 
-The runtime separates three different questions:
+These are research or harness features. They are not required for the core loop
+and are not part of the main reliability claim:
 
-1. Did the agent follow a disciplined coding process?
-2. Is the plan/edit/verification evidence relevant to the user task?
-3. Did the changed code pass a real local check?
-
-`TaskStateMachine` handles the first question by enforcing staged execution.
-`mini_cc.task_success` handles the second question through deterministic
-task-contract and evidence checks. `CodingLoopPolicy` handles the third
-question by preventing final success after code edits until a real verification
-command has run.
-
-This design does not prove global coding ability. It makes the runtime easier
-to inspect, debug, and evaluate on small reproducible local tasks.
+- MCP experiments;
+- subagent orchestration;
+- benchmark hints and Terminal-Bench automation;
+- tool-use eval reports and broader runtime reports;
+- S20-specific research tools beyond the evidence-first path.
 
 ## Quick Start
 
@@ -97,16 +124,16 @@ Run with no API key:
 py -3 -m mini_cc --mock --workspace . "list files"
 ```
 
-Run the S20 comprehensive mode with the mock provider:
+Run the golden path for reviewer/demo use:
 
 ```powershell
-py -3 -m mini_cc --mock --s20 --permission auto --workspace . "s20 snapshot"
+py -3 -m mini_cc evidence --workspace . --prompt "fix the failing test"
 ```
 
-Run through the non-interactive harness-style interface:
+Equivalent explicit command:
 
 ```powershell
-py -3 -m mini_cc run --mock --s20 --permission-mode bypass --workspace . --output-format json --prompt "s20 snapshot"
+py -3 -m mini_cc run --s20 --coding-loop --permission-mode bypass --workspace . --output-format json --prompt "fix the failing test"
 ```
 
 Run tests:
@@ -126,40 +153,58 @@ $env:PYTHONDONTWRITEBYTECODE='1'
 & $py -m unittest discover
 ```
 
-## Coding Task Success Loop
+## Evidence Report
 
-Coding Task Success Loop moves code tasks from "the agent can call tools" to
-"the agent must verify after editing." The runtime tracks file edits, blocks a
-final answer until a real test/check command runs, asks the model to repair
-failed verification, reruns verification, and writes a task-success artifact.
+The core path writes an Evidence Report. The current compatibility path is:
 
-Run with S20:
-
-```powershell
-py -3 -m mini_cc --s20 --coding-loop --permission auto --workspace . "fix the failing test"
+```text
+.mini_cc/task-success/last-run.json
 ```
 
-Harness-style run with an explicit test command:
+This file records process checks, semantic evidence, modified files,
+verification results, blockers, warnings, and final status. Example:
 
-```powershell
-py -3 -m mini_cc run --s20 --coding-loop --test-command "python -m unittest discover" --permission-mode bypass --workspace . --output-format json --prompt "fix the bug"
+```json
+{
+  "status": "passed",
+  "task_prompt": "fix the failing test",
+  "process_checks": {
+    "explored": true,
+    "localized": true,
+    "planned": true,
+    "edited": true,
+    "verified": true
+  },
+  "semantic_checks": {
+    "plan_relevant": true,
+    "edit_relevant": true,
+    "verification_relevant": true,
+    "meaningful_verification": true
+  },
+  "tools_called": [
+    {"name": "read_file", "is_error": false},
+    {"name": "apply_patch", "is_error": false},
+    {"name": "run_shell", "is_error": false}
+  ],
+  "planned_files": ["mini_cc/task_success.py"],
+  "modified_files": ["mini_cc/task_success.py"],
+  "verification_commands": [
+    {
+      "command": "python -m unittest discover",
+      "exit_code": 0,
+      "passed": true
+    }
+  ],
+  "semantic_warnings": [],
+  "semantic_blockers": [],
+  "final_status": "passed"
+}
 ```
 
-Key rules:
+## Runtime Rules
 
 - `apply_patch` applies unified diffs and is safer than exact-string
   replacement for larger code edits.
-- Only test/check commands run through `run_shell` count as verification.
-- `git_diff` is useful diff evidence, but it is not pass/fail evidence.
-- `git_status` is workspace evidence, but it is not pass/fail evidence.
-- `context_snapshot` is context evidence, but it is not pass/fail evidence.
-- The latest task outcome is written to `.mini_cc/task-success/last-run.json`.
-
-## Staged Task State
-
-`TaskStateMachine` enforces process rules in code, not only in the system
-prompt:
-
 - writes are blocked before exploration and planning;
 - existing files must be read before they can be edited;
 - edits are limited to `planned_files` unless the task explicitly requires a
@@ -168,31 +213,36 @@ prompt:
   move the task toward `FINAL`;
 - failed verification moves the task to `REPAIR` until the repair limit is
   reached.
-
-This is separate from `CodingLoopPolicy`: the state machine controls the task
-process, while `CodingLoopPolicy` remains the final task-success gate.
+- `git_diff`, `git_status`, and `context_snapshot` are runtime evidence, not
+  pass/fail verification.
 
 ## Semantic Task Success Checks
 
-`mini_cc.task_success` adds a deterministic semantic evidence layer on top of
-the staged process gate. It does not call another model. Instead, it extracts a
-small `TaskContract` from the user prompt and checks whether the plan, edits,
-and verification evidence are relevant to that contract.
+`mini_cc.task_success` adds a deterministic evidence-based semantic layer on top
+of the staged process gate. It does not call another model. Instead, it extracts
+a structured `TaskContract` from the user prompt and checks whether the plan,
+edits, and verification evidence are relevant to that contract.
 
 The semantic layer checks:
 
-- explicit paths, symbols, requested operations, and user constraints such as
-  "only modify this file" or "do not modify tests";
-- whether `planned_files` are grounded in prompt paths, explored candidates, or
-  files that were actually read;
+- explicit paths, symbols, requested operations, primary and secondary intents,
+  and user constraints such as "only modify this file" or "do not modify tests";
+- acceptance criteria from paths, symbols, quoted literals, expected/actual
+  phrases, error snippets, and explicit verification commands;
+- whether `planned_files` are grounded in prompt paths, explored candidates,
+  files that were actually read, or failure-output evidence;
 - whether edits stay inside `planned_files` and match the task type;
+- hard blockers, warnings, and low-confidence exploration-needed decisions;
 - whether the verification command is a real test/lint/typecheck/build command
-  and relevant to the modified files;
+  or docs-check command and relevant to the modified files;
 - whether successful verification output is meaningful, for example rejecting
   `pytest` runs that report `collected 0 items` or `no tests ran`.
 
 The task-success artifact includes `task_contract`, `process_checks`,
 `semantic_checks`, `semantic_warnings`, and `semantic_blockers`.
+
+These checks improve auditability and reduce obvious off-task edits. They do not
+prove global correctness and should not be read as an external benchmark result.
 
 ## Providers
 
@@ -236,16 +286,17 @@ $env:OPENAI_API_KEY = "your_key"
 py -3 -m mini_cc run --provider openai --model gpt-5 --s20 --permission-mode bypass --workspace . --output-format json --prompt "list files"
 ```
 
-## Core Modes
+## CLI Modes
 
 - `--permission ask`: ask before write tools and shell commands.
 - `--permission read-only`: block write tools and shell commands.
 - `--permission auto`: allow write tools and shell commands automatically.
 - `--mock`: use a deterministic local provider.
-- `--s20`: enable the comprehensive teaching toolset.
-- `--coding-loop`: enable verification gating for code edits.
-- `--test-command TEXT`: provide the verification command to prefer.
+- `evidence --prompt ...`: recommended reviewer/demo path for the core loop.
 - `run --prompt ... --output-format json`: non-interactive harness entrypoint.
+- `--coding-loop`: enable the verification gate for code edits.
+- `--test-command TEXT`: provide the verification command to prefer.
+- `--s20`: enable optional comprehensive tooling used by the evidence path.
 
 Diagnose merged project configuration:
 
@@ -279,7 +330,10 @@ Run the full health check including unit tests:
 powershell -ExecutionPolicy Bypass -File scripts\health_check.ps1 -Full
 ```
 
-## Local UI
+## Optional Local UI
+
+The UI is a manual demo surface for the same evidence-first runtime. It is not
+the core contribution.
 
 Start the native Windows desktop app:
 
@@ -314,7 +368,7 @@ workspace, permission mode, and prompt. API keys are passed only to the local
 backend process for the current run and are not written into project files by
 default.
 
-## Hooks And Permissions
+## Optional Hooks And Permissions
 
 S20 mode loads project hooks from:
 
@@ -338,9 +392,10 @@ Permission events are emitted from the permission engine itself. `ask` mode can
 request confirmation, `read-only` blocks writes and shell commands, and `auto`
 allows common local actions while still recording permission evidence.
 
-## S20 Tooling
+## Experimental S20 Tooling
 
-S20 mode includes:
+S20 mode includes optional and experimental teaching tools around the core
+runtime:
 
 - Planner / Executor / Verifier workflow records;
 - file read, list, search, write, replace, patch, and shell tools;
@@ -352,6 +407,9 @@ S20 mode includes:
 - git status and git diff read tools;
 - context snapshot support for long tasks;
 - subagent and MCP-related runtime experiments.
+
+These tools are useful for studying orchestration, but they are not required to
+understand the Evidence Report path.
 
 ## Task-Success Smoke Eval
 
@@ -372,9 +430,9 @@ This is a small local smoke validation. It is not an external benchmark score.
 
 ## Documentation
 
-- [Coding Reliability Loop](docs/coding_reliability_loop.md)
+- [Evidence-First Runtime](docs/evidence_first_runtime.md)
 - [Runtime Architecture](docs/architecture.md)
-- [Runtime Modularization Notes](docs/runtime-modularization-change.md)
+- [Coding Reliability Loop](docs/coding_reliability_loop.md)
 - [Interview Summary](docs/interview_summary.md)
 
 Additional notes, localized materials, and historical review documents may

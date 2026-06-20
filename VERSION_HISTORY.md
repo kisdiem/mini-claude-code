@@ -3,6 +3,34 @@
 This file records architecture iterations, benchmark status, and known
 validation limits for the teaching agent.
 
+## 3.9.0 - Evidence-First Runtime Positioning
+
+Date: 2026-06-20
+
+Status: implemented and locally tested.
+
+What changed:
+
+- upgraded package version to `3.9.0`;
+- refactored `mini_cc.task_success` into a deterministic evidence-based
+  semantic validation layer with structured task contract evidence, hard
+  blockers, warnings, relevance scores, and exploration-needed decisions;
+- added stronger plan, edit, verification-command, and verification-output
+  checks while keeping the existing public task-success function names;
+- added the `mini_cc evidence` golden-path CLI alias for reviewer/demo runs;
+- reframed the README around the Evidence-first Coding Loop and separated
+  Core Runtime, Optional Extensions, and Experimental Features;
+- added `docs/evidence_first_runtime.md`;
+- expanded the Evidence Report with task prompt and tool-call summaries;
+- added tests for CLI evidence mode, README positioning, task-success V2
+  behavior, and artifact fields.
+
+Test status:
+
+- full `python -m unittest discover` passed locally:
+  - 298 tests;
+  - Python 3.10.
+
 ## 3.8.0 - Real Usability Hardening
 
 Date: 2026-06-20

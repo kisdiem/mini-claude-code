@@ -1,7 +1,21 @@
 # Mini Claude Code Architecture
 
-This project is now split into runtime modules instead of keeping every S20
-capability inside one file.
+Mini Claude Code is organized around an evidence-first coding loop. The core
+runtime is the path a reviewer should inspect first; optional and experimental
+modules extend that path but are not required for the main reliability claim.
+
+## Runtime Layers
+
+- Core Runtime: `agent`, `tools`, `permission`, `task_state`,
+  `task_success`, `coding_loop`, `task_runtime`, `verification`, and the
+  Evidence Report written under `.mini_cc/task-success/last-run.json`.
+- Optional Extensions: hooks, session records, context snapshots, local memory,
+  skills, git evidence tools, desktop UI, and web frontend.
+- Experimental Features: MCP adapters, subagents, benchmark hints,
+  Terminal-Bench automation, tool-use eval, and broad runtime reports.
+
+The historical module table below remains useful for code navigation, but the
+default product story is the core Evidence Report path.
 
 ## Runtime Modules
 

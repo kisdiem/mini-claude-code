@@ -37,10 +37,14 @@ class TaskRuntime:
         self.enabled = enabled
         self.task_state_machine = task_state_machine
         self.coding_loop = coding_loop
+        self.task_prompt = ""
+        self.tools_called: list[dict[str, Any]] = []
 
     def start(self, prompt: str) -> None:
         if not self.enabled:
             return
+        self.task_prompt = prompt
+        self.tools_called = []
         if self.task_state_machine is not None:
             self.task_state_machine.start(prompt)
         if self.coding_loop is not None:
@@ -65,6 +69,13 @@ class TaskRuntime:
     def observe_tool_result(self, name: str, tool_input: dict[str, Any], result: ToolResult) -> None:
         if not self.enabled:
             return
+        self.tools_called.append(
+            {
+                "name": name,
+                "is_error": bool(result.is_error),
+                "input_keys": sorted(str(key) for key in tool_input.keys()),
+            }
+        )
         if self.task_state_machine is not None:
             self.task_state_machine.observe_tool_result(name, tool_input, result)
         if self.coding_loop is not None:
@@ -113,6 +124,7 @@ class TaskRuntime:
         payload: dict[str, Any] = {
             "status": final_status,
             "final_status": final_status,
+            "task_prompt": self.task_prompt,
             "coding_loop_enabled": self.coding_loop is not None and bool(getattr(coding_state, "enabled", False)),
             "process_checks": self._process_checks(task_state),
             "semantic_checks": dict(getattr(task_state, "semantic_checks", {}) if task_state is not None else {}),
@@ -122,6 +134,7 @@ class TaskRuntime:
             "verification_commands": verification_commands,
             "modified_files": modified_files,
             "planned_files": list(getattr(task_state, "planned_files", []) if task_state is not None else []),
+            "tools_called": list(self.tools_called),
             "last_failure_summary": self._last_failure_summary(task_state, coding_state),
             "blockers": blockers,
             "warnings": warnings,

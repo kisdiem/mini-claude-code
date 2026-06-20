@@ -3,6 +3,8 @@ from __future__ import annotations
 import unittest
 import tempfile
 from pathlib import Path
+from io import StringIO
+from contextlib import redirect_stdout
 
 from mini_cc.cli import build_agent, extract_benchmark_hints, parse_args, permission_mode, prompt_text, system_prompt_for_workspace
 
@@ -29,6 +31,34 @@ class CliHarnessArgsTests(unittest.TestCase):
         self.assertEqual(args.model, "claude-sonnet")
         self.assertEqual(permission_mode(args), "auto")
         self.assertEqual(args.output_format, "json")
+        self.assertFalse(args.evidence_mode)
+
+    def test_evidence_command_sets_golden_path_defaults(self) -> None:
+        args = parse_args(["evidence", "--workspace", ".", "--prompt", "fix the failing test"])
+
+        self.assertTrue(args.evidence_mode)
+        self.assertTrue(args.s20)
+        self.assertTrue(args.coding_loop)
+        self.assertEqual(permission_mode(args), "auto")
+        self.assertEqual(args.output_format, "json")
+        self.assertEqual(prompt_text(args), "fix the failing test")
+
+    def test_evidence_command_does_not_break_run_command(self) -> None:
+        args = parse_args(["run", "--workspace", ".", "--prompt", "list files"])
+
+        self.assertFalse(args.evidence_mode)
+        self.assertFalse(args.s20)
+        self.assertEqual(args.output_format, "text")
+
+    def test_help_mentions_evidence_first_and_evidence_report(self) -> None:
+        buffer = StringIO()
+        with self.assertRaises(SystemExit):
+            with redirect_stdout(buffer):
+                parse_args(["--help"])
+
+        help_text = buffer.getvalue()
+        self.assertIn("evidence-first", help_text)
+        self.assertIn("Evidence Report", help_text)
 
     def test_openai_provider_arg(self) -> None:
         args = parse_args(["run", "--provider", "openai", "--model", "gpt-5", "--prompt", "list files"])

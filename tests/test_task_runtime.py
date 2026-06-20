@@ -104,6 +104,8 @@ class TaskRuntimeTests(unittest.TestCase):
             self.assertIn("coding_loop_state", artifact)
             self.assertEqual(artifact["modified_files"], ["app.py"])
             self.assertEqual(artifact["planned_files"], ["app.py"])
+            self.assertEqual(artifact["task_prompt"], "fix bug in app.py")
+            self.assertEqual([tool["name"] for tool in artifact["tools_called"]], ["read_file", "replace_text", "run_shell"])
 
 
 if __name__ == "__main__":

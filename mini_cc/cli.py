@@ -60,10 +60,31 @@ def system_prompt_for_workspace(base_prompt: str, workspace: Path, hooks: HookRu
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if argv is None:
         argv = sys.argv[1:]
+    evidence_mode = bool(argv and argv[0] == "evidence")
+    if evidence_mode:
+        argv = [
+            "--s20",
+            "--coding-loop",
+            "--permission-mode",
+            "bypass",
+            "--output-format",
+            "json",
+            *argv[1:],
+        ]
     if argv and argv[0] == "run":
         argv = argv[1:]
 
-    parser = argparse.ArgumentParser(description="Mini Claude-Code-like coding agent.")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Mini Claude Code is an evidence-first local coding-agent runtime. "
+            "Recommended reviewer path: `mini_cc evidence --workspace . --prompt \"fix the failing test\"`."
+        ),
+        epilog=(
+            "`evidence` is a golden-path alias for run mode with S20, coding-loop, "
+            "permission bypass, JSON output, and Evidence Report generation. "
+            "S20/MCP/subagents/benchmark tooling are optional or experimental extensions."
+        ),
+    )
     parser.add_argument(
         "--classify-terminal-bench",
         metavar="RESULTS_JSON",
@@ -171,9 +192,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Real model provider to use when --mock is not set.",
     )
     parser.add_argument("--mock", action="store_true", help="Use deterministic mock provider.")
-    parser.add_argument("--s20", action="store_true", help="Enable the comprehensive S20 toolset.")
+    parser.add_argument("--s20", action="store_true", help="Enable the comprehensive S20 toolset. Optional/experimental beyond the core evidence loop.")
     parser.add_argument("--max-turns", type=int, default=8, help="Maximum model/tool loop turns.")
-    parser.add_argument("--coding-loop", action="store_true", help="Enable Coding Task Success Loop for code modification tasks.")
+    parser.add_argument("--coding-loop", action="store_true", help="Enable the evidence-first verification gate for code modification tasks.")
     parser.add_argument("--no-coding-loop", action="store_true", help="Disable Coding Task Success Loop, including the S20 default.")
     parser.add_argument("--test-command", help="Explicit verification command for Coding Task Success Loop.")
     parser.add_argument("--max-repair-attempts", type=int, default=3, help="Maximum repair attempts after failed verification.")
@@ -241,7 +262,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="ask",
         help="Permission mode for write_file, replace_text, and run_shell.",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    args.evidence_mode = evidence_mode
+    return args
 
 
 def permission_mode(args: argparse.Namespace) -> str:
